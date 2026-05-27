@@ -1,0 +1,6 @@
+{
+  "appId": "com.suaescola.gabaritopro",
+  "appName": "GabaritoPro",
+  "webDir": "build",
+  "bundledWebRuntime": false
+}
