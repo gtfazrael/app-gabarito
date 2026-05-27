@@ -1,0 +1,22 @@
+{
+  "name": "gabaritopro",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@capacitor/android": "latest",
+    "@capacitor/core": "latest",
+    "lucide-react": "^0.292.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "tailwindcss": "^3.3.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "npx tailwindcss -i ./src/index.css -o ./src/output.css && react-scripts build"
+  },
+  "browserslist": [">0.2%", "not dead", "not op_mini all"],
+  "devDependencies": {
+    "@capacitor/cli": "latest"
+  }
+}
