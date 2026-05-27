@@ -1,100 +1,108 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+```react
+import React, { useState, useMemo } from 'react';
 import { 
-  CheckCircle, BarChart3, Settings, Download, 
-  Camera, X, FileImage, Plus, Trash2, Check, AlertTriangle,
-  ChevronRight, ArrowRight
+  Upload, CheckCircle, FileText, BarChart3, 
+  Settings, Download, AlertCircle, ChevronRight,
+  Camera, X, Image as ImageIcon
 } from 'lucide-react';
 
 export default function App() {
-  const [view, setView] = useState('setup'); // 'setup', 'camera', 'results'
+  const [view, setView] = useState('setup'); 
   const [numQuestoes, setNumQuestoes] = useState(10);
   const [numAlternativas, setNumAlternativas] = useState(5);
   const [gabaritoOficial, setGabaritoOficial] = useState(Array(10).fill('A'));
-  
   const [provasLidas, setProvasLidas] = useState([]);
-  const [nomeAlunoAtual, setNomeAlunoAtual] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
+  const [arquivosUpload, setArquivosUpload] = useState([]);
   
-  // Estados da Câmera
-  const videoRef = useRef(null);
-  const [streamAtivo, setStreamAtivo] = useState(null);
-  const [cameraError, setCameraError] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
+  // Novo estado para mostrar a Folha de Respostas na tela
+  const [previewFolha, setPreviewFolha] = useState(null);
+  
+  const [nomeAlunoCamera, setNomeAlunoCamera] = useState('');
 
-  const alternativasInUse = useMemo(() => ['A', 'B', 'C', 'D', 'E'].slice(0, numAlternativas), [numAlternativas]);
+  const alternativasInUse = useMemo(() => {
+    const qtde = parseInt(numAlternativas) || 2;
+    return ['A', 'B', 'C', 'D', 'E'].slice(0, Math.max(2, Math.min(5, qtde)));
+  }, [numAlternativas]);
 
-  useEffect(() => {
-    // Se sair da aba da câmera, desliga a câmera para economizar bateria
-    if (view !== 'camera') {
-      pararCamera();
-    } else {
-      iniciarCamera();
-    }
-    return () => pararCamera();
-  }, [view]);
-
+  // --- Handlers dos Inputs Numéricos ---
   const handleNumQuestoesChange = (e) => {
-    const val = parseInt(e.target.value) || 1;
-    if (val > 0 && val <= 100) {
+    const valStr = e.target.value;
+    if (valStr === '') { setNumQuestoes(''); return; }
+    const val = parseInt(valStr);
+    if (!isNaN(val)) {
       setNumQuestoes(val);
-      setGabaritoOficial(Array(val).fill('A'));
+      if (val > 0 && val <= 100) setGabaritoOficial(Array(val).fill('A'));
     }
+  };
+
+  const handleNumQuestoesBlur = () => {
+    let val = parseInt(numQuestoes);
+    if (isNaN(val) || val < 1) val = 1;
+    if (val > 100) val = 100;
+    setNumQuestoes(val);
+    setGabaritoOficial(Array(val).fill('A'));
   };
 
   const handleNumAlternativasChange = (e) => {
-    const val = parseInt(e.target.value) || 2;
-    if (val >= 2 && val <= 5) {
+    const valStr = e.target.value;
+    if (valStr === '') { setNumAlternativas(''); return; }
+    const val = parseInt(valStr);
+    if (!isNaN(val)) {
       setNumAlternativas(val);
-      const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
-      setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
+      if (val >= 2 && val <= 5) {
+        const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
+        setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
+      }
     }
   };
 
-  const handleGabaritoChange = (index, value) => {
-    const novoGabarito = [...gabaritoOficial];
-    novoGabarito[index] = value;
-    setGabaritoOficial(novoGabarito);
+  const handleNumAlternativasBlur = () => {
+    let val = parseInt(numAlternativas);
+    if (isNaN(val) || val < 2) val = 2;
+    if (val > 5) val = 5;
+    setNumAlternativas(val);
+    const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
+    setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
   };
 
-  const baixarFolhaPadrão = () => {
+  // --- Gerador de Folha Padrão (Modal Image) ---
+  const gerarFolhaNaTela = () => {
+    const qCount = parseInt(numQuestoes) || 1;
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Dimensões otimizadas
     canvas.width = 800;
-    canvas.height = 350 + (numQuestoes * 60);
+    canvas.height = 350 + (qCount * 60);
     
-    // Fundo Branco
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Textos e Cabeçalho
     ctx.fillStyle = '#000000';
     ctx.font = 'bold 32px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('FOLHA DE RESPOSTAS OMR', canvas.width / 2, 60);
+    ctx.fillText('FOLHA DE RESPOSTAS', canvas.width / 2, 60);
     
     ctx.textAlign = 'left';
     ctx.font = '22px Arial';
     ctx.fillText('Aluno(a): _________________________________________________', 50, 130);
     
     ctx.font = 'bold 16px Arial';
-    ctx.fillText('INSTRUÇÕES PARA O APLICATIVO:', 50, 180);
+    ctx.fillText('INSTRUÇÕES:', 50, 180);
     ctx.font = '16px Arial';
-    ctx.fillText('- Preencha a bolinha inteira com caneta escura.', 50, 205);
-    ctx.fillText('- Na hora de escanear, enquadre APENAS a caixa preta abaixo na câmera.', 50, 230);
+    ctx.fillText('- Preencha a bolinha completamente escura.', 50, 205);
+    ctx.fillText('- Na hora de fotografar, enquadre APENAS a caixa preta abaixo.', 50, 230);
     
-    // Caixa delimitadora (Onde a câmera vai focar)
     const boxStartX = 50;
     const boxStartY = 280;
     const boxWidth = 700;
-    const boxHeight = numQuestoes * 60;
+    const boxHeight = qCount * 60;
     
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#000000';
     ctx.strokeRect(boxStartX, boxStartY, boxWidth, boxHeight);
     
-    // Desenhar Questões e Bolinhas
-    for(let i = 0; i < numQuestoes; i++) {
+    for(let i = 0; i < qCount; i++) {
       ctx.font = 'bold 24px Arial';
       ctx.fillStyle = '#000000';
       ctx.fillText((i + 1) + '.', boxStartX + 30, boxStartY + 40 + (i * 60));
@@ -116,20 +124,19 @@ export default function App() {
       });
     }
     
-    const link = document.createElement('a');
-    link.download = `Gabarito_${numQuestoes}_Questoes.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    // Mostra a imagem na tela em vez de tentar baixar ocultamente
+    setPreviewFolha(canvas.toDataURL('image/png'));
   };
 
+  // --- Motor Analisador OMR ---
   const analisarCanvasOMR = (canvas) => {
+    const qCount = parseInt(numQuestoes) || 1;
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
     let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
     
-    // 1. Encontra os limites da tinta (Bounding Box)
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const i = (y * canvas.width + x) * 4;
@@ -146,15 +153,13 @@ export default function App() {
     const gridW = maxX - minX;
     const gridH = maxY - minY;
 
-    // Se a imagem estiver vazia ou com problema
-    if (gridW <= 0 || gridH <= 0) return Array(numQuestoes).fill('-');
+    if (gridW <= 0 || gridH <= 0) return Array(qCount).fill('-');
 
     const cellW = gridW / alternativasInUse.length;
-    const cellH = gridH / numQuestoes;
-    const respostas = [];
+    const cellH = gridH / qCount;
+    const respuestas = [];
 
-    // 2. Analisa cada célula da grade calculada
-    for (let q = 0; q < numQuestoes; q++) {
+    for (let q = 0; q < qCount; q++) {
       let maxDarkness = -1;
       let bestAlt = '-';
 
@@ -182,82 +187,89 @@ export default function App() {
           bestAlt = alternativasInUse[a];
         }
       }
-      respostas.push(maxDarkness < 0.05 ? '-' : bestAlt);
+      respuestas.push(maxDarkness < 0.05 ? '-' : bestAlt);
     }
-    return respostas;
+    return respuestas;
   };
 
-  const iniciarCamera = async () => {
-    setCameraError('');
-    try {
-      // Prioriza a câmera traseira (environment) do celular
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setStreamAtivo(stream);
-    } catch (err) {
-      setCameraError("Não foi possível acessar a câmera. Verifique as permissões do seu navegador.");
-    }
-  };
-
-  const pararCamera = () => {
-    if (streamAtivo) {
-      streamAtivo.getTracks().forEach(track => track.stop());
-      setStreamAtivo(null);
-    }
-  };
-
-  const capturarCâmera = () => {
-    if (!videoRef.current) return;
-    setIsProcessing(true);
-
-    setTimeout(() => {
-      try {
-        const video = videoRef.current;
-        const canvasTotal = document.createElement('canvas');
-        canvasTotal.width = video.videoWidth;
-        canvasTotal.height = video.videoHeight;
-        const ctxTotal = canvasTotal.getContext('2d');
-        ctxTotal.drawImage(video, 0, 0, canvasTotal.width, canvasTotal.height);
-
-        // A máscara na UI tem 80% de largura e 60% de altura. 
-        // Calculamos o corte exato nos pixels nativos do vídeo.
-        const cropW = canvasTotal.width * 0.8;
-        const cropH = canvasTotal.height * 0.6;
-        const cropX = (canvasTotal.width - cropW) / 2;
-        const cropY = (canvasTotal.height - cropH) / 2;
-
-        const canvasRecortado = document.createElement('canvas');
-        canvasRecortado.width = cropW;
-        canvasRecortado.height = cropH;
-        const ctxRecortado = canvasRecortado.getContext('2d');
+  // --- Processamento de Imagem Universal (Upload e Câmera) ---
+  const processarArquivoImagem = (file, nomeAluno) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = 800 / img.width;
+        canvas.width = 800;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         
-        ctxRecortado.drawImage(canvasTotal, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-        const respostas = analisarCanvasOMR(canvasRecortado);
-
-        // Se o nome estiver vazio, gera um automático (ex: Aluno 1, Aluno 2)
-        const nomeFinal = nomeAlunoAtual.trim() || `Aluno ${provasLidas.length + 1}`;
-
-        setProvasLidas(prev => [...prev, {
+        const respostas = analisarCanvasOMR(canvas);
+        resolve({
           id: Math.random().toString(36).substr(2, 9),
-          nome: nomeFinal,
+          nome: nomeAluno,
           respostas: respostas
-        }]);
+        });
+      };
+      img.onerror = () => reject("Erro ao ler imagem");
+      img.src = URL.createObjectURL(file);
+    });
+  };
 
-        setNomeAlunoAtual('');
-      } catch (err) {
-        alert("Erro ao processar imagem.");
-      } finally {
-        setIsProcessing(false);
-      }
-    }, 100); // Timeout rápido para a UI mostrar o estado "Processando..."
+  // --- Handlers de Upload ---
+  const handleFileUpload = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setArquivosUpload(prev => [...prev, ...Array.from(e.target.files)]);
+    }
+  };
+
+  const processarImagensUpload = async () => {
+    if (arquivosUpload.length === 0) return;
+    setIsScanning(true);
+    try {
+      const novosAlunos = await Promise.all(arquivosUpload.map(async (arquivo) => {
+        const nomeGerado = arquivo.name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
+        return await processarArquivoImagem(arquivo, nomeGerado);
+      }));
+      setProvasLidas(prev => [...prev, ...novosAlunos]);
+      setArquivosUpload([]);
+    } catch (error) {
+      alert("Erro ao processar as imagens.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // --- Handlers da Câmera Nativa ---
+  const handleCameraCapture = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!nomeAlunoCamera.trim()) {
+      alert("Por favor, digite o nome do aluno antes de tirar a foto.");
+      return;
+    }
+
+    setIsScanning(true);
+    try {
+      const novaProva = await processarArquivoImagem(file, nomeAlunoCamera);
+      setProvasLidas(prev => [...prev, novaProva]);
+      setNomeAlunoCamera('');
+      alert(`Prova de ${nomeAlunoCamera} escaneada com sucesso!`);
+    } catch (error) {
+      alert("Ocorreu um erro ao ler a foto.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // --- Resultados e Dados ---
+  const limparDados = () => {
+    if(window.confirm("Apagar todos os dados da memória?")) setProvasLidas([]);
   };
 
   const dadosProcessados = useMemo(() => {
+    const qCount = parseInt(numQuestoes) || 1;
     if (provasLidas.length === 0) return null;
     let totalAcertosTurma = 0;
 
@@ -268,245 +280,198 @@ export default function App() {
         if (isCorreto) acertos++;
         return isCorreto; 
       });
-
       totalAcertosTurma += acertos;
-      return { 
-        ...aluno, 
-        acertos, 
-        porcentagem: (acertos / numQuestoes) * 100, 
-        correcao 
-      };
+      return { ...aluno, acertos, porcentagem: (acertos / qCount) * 100, correcao };
     });
 
-    // Classificação: da maior pontuação para a menor
     const ranking = [...alunosProcessados].sort((a, b) => b.acertos - a.acertos);
-    const porcentagemTurma = ((totalAcertosTurma / (provasLidas.length * numQuestoes)) * 100).toFixed(1);
+    const porcentagemTurma = ((totalAcertosTurma / (provasLidas.length * qCount)) * 100).toFixed(1);
 
     return { ranking, porcentagemTurma };
   }, [provasLidas, gabaritoOficial, numQuestoes]);
 
+  // O botão de download CSV continua o mesmo, pois dados em texto puro (.csv) geralmente não dão problema em WebViews
   const exportarCSV = () => {
+    const qCount = parseInt(numQuestoes) || 1;
     if (!dadosProcessados) return;
-    let csv = "Classificação,Nome,Acertos,Porcentagem,";
-    for(let i=1; i<=numQuestoes; i++) csv += `Q${i},`;
+    let csv = "Nome,Acertos,%,";
+    for(let i=1; i<=qCount; i++) csv += `Q${i},`;
     csv += "\n";
-    
-    dadosProcessados.ranking.forEach((aluno, index) => {
-      csv += `${index + 1},"${aluno.nome}",${aluno.acertos},${aluno.porcentagem.toFixed(1)}%,`;
+    dadosProcessados.ranking.forEach(aluno => {
+      csv += `"${aluno.nome}",${aluno.acertos},${aluno.porcentagem.toFixed(1)}%,`;
       aluno.respostas.forEach(resp => csv += `${resp},`);
       csv += "\n";
     });
-    
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', 'Resultados_GabaritoPro.csv');
+    link.setAttribute('download', 'Resultados_Gabarito.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  // --- RENDERS DAS TELAS ---
   const renderSetup = () => (
-    <div className="pb-24 animate-in fade-in slide-in-from-bottom-4">
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6">
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-          <Settings className="text-indigo-600" /> Configurações da Prova
-        </h2>
-        
-        <div className="space-y-5">
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Total de Questões</label>
-            <input 
-              type="number" inputMode="numeric" value={numQuestoes} onChange={handleNumQuestoesChange} 
-              className="w-full text-lg px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-1">Alternativas (A até E)</label>
-            <input 
-              type="number" inputMode="numeric" value={numAlternativas} onChange={handleNumAlternativasChange} min="2" max="5" 
-              className="w-full text-lg px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" 
-            />
-          </div>
+    <div className="max-w-3xl mx-auto bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+      <div className="flex flex-col gap-4 mb-6 justify-between border-b border-slate-100 pb-4">
+        <div className="flex items-center gap-3">
+          <Settings className="w-6 h-6 text-indigo-600" />
+          <h2 className="text-xl font-bold text-slate-800">1. Configurar Prova</h2>
         </div>
-
         <button 
-          onClick={baixarFolhaPadrão}
-          className="w-full mt-6 bg-slate-800 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform"
+          onClick={gerarFolhaNaTela}
+          className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-lg font-bold transition-colors text-sm shadow-sm"
         >
-          <FileImage className="w-5 h-5" /> Baixar Folha de Respostas
+          <ImageIcon className="w-5 h-5" /> Gerar Folha de Respostas
         </button>
       </div>
+      
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div>
+          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Questões (1-100)</label>
+          <input type="number" value={numQuestoes} onChange={handleNumQuestoesChange} onBlur={handleNumQuestoesBlur} className="w-full px-4 py-2 border rounded-lg text-lg focus:ring-2 focus:ring-indigo-500 font-bold" />
+        </div>
+        <div>
+          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Opções (2-5)</label>
+          <input type="number" value={numAlternativas} onChange={handleNumAlternativasChange} onBlur={handleNumAlternativasBlur} className="w-full px-4 py-2 border rounded-lg text-lg focus:ring-2 focus:ring-indigo-500 font-bold" />
+        </div>
+      </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-        <h3 className="text-lg font-bold text-slate-800 mb-4">Gabarito Oficial</h3>
-        <div className="grid grid-cols-2 gap-3">
-          {gabaritoOficial.map((resp, index) => (
-            <div key={index} className="flex items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-              <span className="w-8 font-black text-slate-400 text-center">{index + 1}</span>
-              <select 
-                value={resp} 
-                onChange={(e) => handleGabaritoChange(index, e.target.value)} 
-                className="flex-1 bg-white border-0 font-bold text-indigo-700 text-lg py-2 focus:ring-0 cursor-pointer"
-              >
+      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+        <h3 className="text-sm font-bold text-slate-700 uppercase mb-4">Gabarito Oficial</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {Array.isArray(gabaritoOficial) && gabaritoOficial.map((resp, index) => (
+            <div key={index} className="flex items-center gap-2 bg-white p-2 border rounded-md shadow-sm">
+              <span className="w-6 text-xs font-black text-slate-400 text-right">{index + 1}.</span>
+              <select value={resp} onChange={(e) => {
+                const nv = [...gabaritoOficial];
+                nv[index] = e.target.value;
+                setGabaritoOficial(nv);
+              }} className="flex-1 border-0 font-bold bg-transparent text-indigo-700 focus:ring-0">
                 {alternativasInUse.map(alt => <option key={alt} value={alt}>{alt}</option>)}
               </select>
             </div>
           ))}
         </div>
       </div>
-      
-      <button 
-        onClick={() => setView('camera')}
-        className="fixed bottom-24 left-4 right-4 bg-indigo-600 text-white font-bold text-lg py-4 rounded-xl shadow-lg flex justify-center items-center gap-2 active:scale-95 transition-transform z-10"
-      >
-        Avançar para Scanner <ChevronRight className="w-6 h-6" />
-      </button>
     </div>
   );
 
   const renderCamera = () => (
-    <div className="h-[calc(100vh-80px)] flex flex-col bg-black absolute inset-0 z-50">
-      {/* Top Bar Câmera */}
-      <div className="bg-black/80 px-4 py-4 flex justify-between items-center text-white z-10">
-        <h2 className="font-bold text-lg flex items-center gap-2"><Camera className="w-5 h-5"/> Scanner</h2>
-        <button onClick={() => setView('setup')} className="bg-white/20 p-2 rounded-full"><X className="w-5 h-5"/></button>
+    <div className="max-w-xl mx-auto space-y-4">
+      <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 mb-4 text-sm text-amber-800 font-medium">
+        💡 <strong>Dica:</strong> Na hora de tirar a foto, preencha a tela do seu celular focando o máximo possível <strong>apenas na caixa retangular preta</strong> contendo as bolinhas.
       </div>
 
-      {/* Input de Nome Flutuante */}
-      <div className="absolute top-20 left-4 right-4 z-20">
-        <input 
-          type="text" 
-          value={nomeAlunoAtual} 
-          onChange={(e) => setNomeAlunoAtual(e.target.value)} 
-          placeholder="Nome do Aluno (Opcional)"
-          className="w-full px-5 py-4 bg-white/90 backdrop-blur-md rounded-2xl text-lg font-bold text-slate-800 placeholder-slate-500 shadow-xl border border-white/50 focus:outline-none"
-        />
-      </div>
+      <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+        <div className="mb-6">
+          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Nome do Aluno:</label>
+          <input 
+            type="text" value={nomeAlunoCamera} onChange={(e) => setNomeAlunoCamera(e.target.value)} 
+            placeholder="Ex: Ana Silva"
+            className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 font-medium text-lg"
+          />
+        </div>
 
-      {/* Área da Câmera */}
-      <div className="flex-1 relative flex items-center justify-center overflow-hidden">
-        {cameraError ? (
-          <div className="text-white text-center p-6 flex flex-col items-center">
-            <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
-            <p className="font-bold mb-4">{cameraError}</p>
-            <button onClick={iniciarCamera} className="bg-indigo-600 px-6 py-2 rounded-lg font-bold">Tentar Novamente</button>
-          </div>
-        ) : (
-          <>
-            <video ref={videoRef} autoPlay playsInline className="absolute min-w-full min-h-full object-cover" />
-            
-            {/* Overlay Guia - Representa 80% larg x 60% alt */}
-            <div className="absolute w-[80%] h-[60%] border-4 border-yellow-400/80 border-dashed rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] flex flex-col justify-between p-2">
-              <div className="w-6 h-6 border-t-4 border-l-4 border-yellow-400"></div>
-              <div className="w-full text-center text-white font-bold text-sm bg-black/50 py-1 rounded backdrop-blur-sm self-center">
-                Enquadre a caixa das respostas
-              </div>
-              <div className="w-6 h-6 border-b-4 border-r-4 border-yellow-400 self-end"></div>
+        <label className={`w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors ${!nomeAlunoCamera.trim() ? 'bg-slate-50 border-slate-300 text-slate-400' : 'bg-indigo-50 border-indigo-400 text-indigo-700'}`}>
+          <input 
+            type="file" 
+            accept="image/*" 
+            capture="environment" // Este comando mágico invoca a câmera do celular diretamente!
+            className="hidden" 
+            onChange={handleCameraCapture} 
+            disabled={!nomeAlunoCamera.trim() || isScanning} 
+          />
+          {isScanning ? (
+            <div className="flex items-center gap-2 text-indigo-600">
+               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
+               Analisando Pixels...
             </div>
-          </>
-        )}
+          ) : (
+            <>
+              <Camera className="w-10 h-10" /> 
+              <span>Tirar Foto da Prova</span>
+            </>
+          )}
+        </label>
       </div>
+    </div>
+  );
 
-      {/* Controles Inferiores da Câmera */}
-      <div className="bg-black/90 p-6 flex flex-col items-center gap-6 pb-safe">
-        
-        {/* Botão de Captura Estilo iOS */}
-        <button 
-          onClick={capturarCâmera}
-          disabled={!streamAtivo || isProcessing}
-          className="w-20 h-20 bg-white rounded-full border-4 border-slate-300 flex items-center justify-center active:scale-90 transition-transform disabled:opacity-50"
-        >
-          {isProcessing ? <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div> : <div className="w-16 h-16 bg-white border-2 border-slate-200 rounded-full"></div>}
-        </button>
-
-        <div className="w-full flex justify-between items-center">
-          <div className="text-white font-medium bg-white/10 px-4 py-2 rounded-xl">
-            <span className="font-bold text-green-400">{provasLidas.length}</span> Lidas
-          </div>
-
-          <button 
-            onClick={() => setView('results')}
-            disabled={provasLidas.length === 0}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all
-              ${provasLidas.length > 0 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-500'}`}
-          >
-            Gerar Planilha <ArrowRight className="w-5 h-5" />
+  const renderUpload = () => (
+    <div className="max-w-xl mx-auto bg-white p-6 rounded-xl border border-slate-200 text-center">
+      <Upload className="w-10 h-10 text-indigo-600 mx-auto mb-3" />
+      <h2 className="text-lg font-bold text-slate-800 mb-4">Upload de Galeria</h2>
+      <label className="border-2 border-dashed border-indigo-200 bg-indigo-50/20 rounded-xl p-6 cursor-pointer block">
+        <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileUpload} disabled={isScanning} />
+        <span className="font-bold text-indigo-600 text-sm">Selecionar Fotos do Celular</span>
+      </label>
+      {arquivosUpload.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-bold text-slate-500 text-left mb-2">{arquivosUpload.length} arquivos selecionados.</p>
+          <button onClick={processarImagensUpload} disabled={isScanning} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold">
+            {isScanning ? 'Processando...' : 'Processar Lote'}
           </button>
         </div>
-      </div>
+      )}
     </div>
   );
 
   const renderResults = () => {
     if (!dadosProcessados) {
       return (
-        <div className="flex flex-col items-center justify-center h-64 text-slate-400 text-center px-4">
-          <FileImage className="w-16 h-16 mb-4 text-slate-300" />
-          <p className="font-bold text-lg text-slate-600 mb-2">Nenhuma prova escaneada</p>
-          <p>Volte para a aba Câmera e comece a escanear as folhas de respostas.</p>
+        <div className="text-center py-12 bg-white rounded-xl border border-dashed">
+          <FileText className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+          <p className="text-slate-500 font-medium">Nenhuma prova escaneada na memória.</p>
         </div>
       );
     }
-
     return (
-      <div className="pb-24 animate-in fade-in">
-        {/* Cards de Resumo */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center text-center">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Turma</p>
-            <p className="text-3xl font-black text-slate-800">{provasLidas.length}</p>
-            <p className="text-sm font-medium text-slate-500">Alunos</p>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-white p-4 rounded-xl border text-center">
+            <p className="text-xs text-slate-400 uppercase font-black">Alunos Lidos</p>
+            <p className="text-2xl font-black text-slate-800">{provasLidas.length}</p>
           </div>
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center text-center">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Média</p>
-            <p className="text-3xl font-black text-green-600">{dadosProcessados.porcentagemTurma}%</p>
-            <p className="text-sm font-medium text-slate-500">Acertos</p>
+          <div className="bg-white p-4 rounded-xl border text-center">
+            <p className="text-xs text-slate-400 uppercase font-black">Média</p>
+            <p className="text-2xl font-black text-green-600">{dadosProcessados.porcentagemTurma}%</p>
           </div>
         </div>
 
-        {/* Planilha Mobile-Friendly */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
-          <div className="p-4 bg-slate-800 text-white flex justify-between items-center">
-            <h2 className="font-bold text-lg">Classificação</h2>
-            <button onClick={exportarCSV} className="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1">
-              <Download className="w-4 h-4"/> Excel
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+            <h2 className="font-bold text-slate-800">Planilha</h2>
+            <button onClick={exportarCSV} className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">
+              <Download className="w-3.5 h-3.5" /> Baixar (.csv)
             </button>
           </div>
           
-          {/* Scroll horizontal para a tabela não quebrar na tela pequena */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-max">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs uppercase">
-                  <th className="p-3 border-b font-black text-center w-12">#</th>
-                  <th className="p-3 border-b font-black sticky left-0 bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Aluno</th>
-                  <th className="p-3 border-b font-black text-center bg-indigo-50/50">Nota</th>
+                <tr className="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap">
+                  <th className="p-3 border-b font-bold">#</th>
+                  <th className="p-3 border-b font-bold">Aluno</th>
+                  <th className="p-3 border-b font-bold text-center bg-indigo-50">Nota</th>
                   {gabaritoOficial.map((_, i) => (
-                    <th key={i} className="p-3 border-b text-center font-bold text-slate-400">Q{i + 1}</th>
+                    <th key={i} className="p-3 border-b text-center font-bold">Q{i + 1}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
+              <tbody className="divide-y divide-slate-100 text-xs font-bold">
                 {dadosProcessados.ranking.map((aluno, index) => (
-                  <tr key={aluno.id} className="active:bg-slate-50">
-                    <td className="p-3 text-center font-black text-slate-400">{index + 1}º</td>
-                    <td className="p-3 font-bold text-slate-800 sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                      {aluno.nome}
-                    </td>
-                    <td className="p-3 text-center">
-                      <span className="bg-indigo-100 text-indigo-800 font-black px-2 py-1 rounded-md">
-                        {aluno.porcentagem.toFixed(0)}%
-                      </span>
-                    </td>
+                  <tr key={aluno.id} className="hover:bg-slate-50/80">
+                    <td className="p-3 text-slate-400">{index + 1}º</td>
+                    <td className="p-3 text-slate-800 whitespace-nowrap">{aluno.nome}</td>
+                    <td className="p-3 text-center text-indigo-700 bg-indigo-50/30">{aluno.acertos}</td>
                     {aluno.respostas.map((resp, i) => {
                       const isCorreto = aluno.correcao[i];
                       const isBranco = resp === '-';
                       return (
-                        <td key={i} className={`p-3 text-center font-black border-l border-white/50
-                            ${isCorreto ? 'bg-blue-50 text-blue-600' : isBranco ? 'bg-slate-100 text-slate-400' : 'bg-red-50 text-red-500'}
-                          `}>
+                        <td key={i} className={`p-3 text-center border-l border-white ${isCorreto ? 'bg-blue-100 text-blue-700' : isBranco ? 'bg-slate-100 text-slate-400' : 'bg-red-100 text-red-700'}`}>
                           {resp}
                         </td>
                       );
@@ -517,74 +482,60 @@ export default function App() {
             </table>
           </div>
         </div>
-
-        <button 
-          onClick={() => {
-            if(window.confirm("Isso apagará a planilha atual. Tem certeza?")) {
-              setProvasLidas([]);
-              setView('setup');
-            }
-          }}
-          className="w-full flex items-center justify-center gap-2 text-red-500 font-bold py-4 active:bg-red-50 rounded-xl"
-        >
-          <Trash2 className="w-5 h-5"/> Limpar Dados e Recomeçar
+        <button onClick={limparDados} className="w-full py-3 border border-red-200 text-red-600 rounded-lg text-sm font-bold bg-red-50">
+          Zerar Memória
         </button>
       </div>
     );
   };
 
-  const BottomNav = () => (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe pt-2 px-4 z-40 flex justify-around">
-      <button 
-        onClick={() => setView('setup')} 
-        className={`flex flex-col items-center p-2 min-w-[80px] rounded-xl transition-colors ${view === 'setup' ? 'text-indigo-600' : 'text-slate-400'}`}
-      >
-        <Settings className={`w-6 h-6 mb-1 ${view === 'setup' ? 'fill-indigo-100' : ''}`} />
-        <span className="text-[11px] font-bold">Configurar</span>
-      </button>
-      
-      {/* Botão de Câmera Centralizado e em Destaque */}
-      <button 
-        onClick={() => setView('camera')} 
-        className="relative -top-6 bg-indigo-600 text-white w-16 h-16 rounded-full flex items-center justify-center shadow-lg shadow-indigo-600/30 border-4 border-slate-100 active:scale-95 transition-transform"
-      >
-        <Camera className="w-7 h-7" />
-      </button>
-      
-      <button 
-        onClick={() => setView('results')} 
-        className={`flex flex-col items-center p-2 min-w-[80px] rounded-xl transition-colors relative ${view === 'results' ? 'text-indigo-600' : 'text-slate-400'}`}
-      >
-        <BarChart3 className={`w-6 h-6 mb-1 ${view === 'results' ? 'fill-indigo-100' : ''}`} />
-        <span className="text-[11px] font-bold">Planilha</span>
-        {provasLidas.length > 0 && (
-          <span className="absolute top-1 right-3 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
-        )}
-      </button>
-    </div>
+  const NavButton = ({ id, name, icon: Icon }) => (
+    <button onClick={() => setView(id)} className={`flex flex-col items-center justify-center flex-1 py-2 text-xs font-bold transition-colors ${view === id ? 'text-indigo-600' : 'text-slate-400'}`}>
+      <Icon className="w-5 h-5 mb-0.5" />
+      <span>{name}</span>
+    </button>
   );
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans text-slate-900 selection:bg-indigo-100">
-      {/* Cabeçalho Fixo (Escondido na Câmera) */}
-      {view !== 'camera' && (
-        <header className="bg-indigo-600 text-white pt-safe sticky top-0 z-30 shadow-md">
-          <div className="px-5 py-4 flex items-center gap-3">
-            <CheckCircle className="w-7 h-7 text-green-300" />
-            <h1 className="text-xl font-black tracking-tight">Gabarito<span className="text-indigo-200">Pro</span></h1>
-          </div>
-        </header>
-      )}
+    <div className="min-h-screen font-sans bg-slate-50 pb-20 relative">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 shadow-sm">
+        <h1 className="text-center font-black tracking-tight text-lg text-slate-800">Gabarito<span className="text-indigo-600">Pro</span></h1>
+      </header>
 
-      {/* Conteúdo Principal */}
-      <main className={`p-4 ${view === 'camera' ? 'p-0' : ''}`}>
+      <main className="px-4 py-6 max-w-md mx-auto">
         {view === 'setup' && renderSetup()}
         {view === 'camera' && renderCamera()}
+        {view === 'upload' && renderUpload()}
         {view === 'results' && renderResults()}
       </main>
 
-      {/* Menu Inferior (Escondido na Câmera) */}
-      {view !== 'camera' && <BottomNav />}
+      <nav className="bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-40 flex justify-around shadow-lg px-2">
+        <NavButton id="setup" name="Config" icon={Settings} />
+        <NavButton id="camera" name="Câmera" icon={Camera} />
+        <NavButton id="upload" name="Galeria" icon={Upload} />
+        <NavButton id="results" name="Planilha" icon={BarChart3} />
+      </nav>
+
+      {/* Modal Segura para Download da Folha */}
+      {previewFolha && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
+          <button onClick={() => setPreviewFolha(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white">
+            <X className="w-6 h-6" />
+          </button>
+          
+          <div className="bg-white p-2 rounded-xl max-w-sm w-full max-h-[70vh] overflow-y-auto mb-4">
+            <img src={previewFolha} alt="Folha de Respostas" className="w-full h-auto border" />
+          </div>
+          
+          <div className="bg-indigo-600 text-white p-4 rounded-xl max-w-sm w-full text-center shadow-lg">
+            <p className="font-bold text-lg mb-1">Folha Pronta!</p>
+            <p className="text-sm opacity-90">Toque e <strong>segure o dedo</strong> em cima da imagem acima para salvá-la no seu celular ou enviá-la.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+
+```
