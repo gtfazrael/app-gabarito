@@ -1,0 +1,31 @@
+name: Gerar APK Android
+on:
+  workflow_dispatch: 
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Instalar dependências
+        run: npm install
+      - name: Construir o App Web
+        run: npm run build
+      - name: Gerar arquivos do Celular
+        run: |
+          npx cap add android || true
+          npx cap sync android
+      - name: Compilar o .APK (Android Studio)
+        working-directory: ./android
+        run: bash ./gradlew assembleDebug
+      - name: Entregar o arquivo pronto!
+        uses: actions/upload-artifact@v4
+        with:
+          name: GabaritoPro-App
+          path: android/app/build/outputs/apk/debug/app-debug.apk
