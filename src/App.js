@@ -15,9 +15,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [arquivosUpload, setArquivosUpload] = useState([]);
   
-  // Novo estado para mostrar a Folha de Respostas na tela
   const [previewFolha, setPreviewFolha] = useState(null);
-  
   const [nomeAlunoCamera, setNomeAlunoCamera] = useState('');
 
   const alternativasInUse = useMemo(() => {
@@ -25,7 +23,6 @@ export default function App() {
     return ['A', 'B', 'C', 'D', 'E'].slice(0, Math.max(2, Math.min(5, qtde)));
   }, [numAlternativas]);
 
-  // --- Handlers dos Inputs Numéricos ---
   const handleNumQuestoesChange = (e) => {
     const valStr = e.target.value;
     if (valStr === '') { setNumQuestoes(''); return; }
@@ -66,7 +63,6 @@ export default function App() {
     setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
   };
 
-  // --- Gerador de Folha Padrão (Modal Image) ---
   const gerarFolhaNaTela = () => {
     const qCount = parseInt(numQuestoes) || 1;
     const canvas = document.createElement('canvas');
@@ -124,11 +120,9 @@ export default function App() {
       });
     }
     
-    // Mostra a imagem na tela em vez de tentar baixar ocultamente
     setPreviewFolha(canvas.toDataURL('image/png'));
   };
 
-  // --- Motor Analisador OMR ---
   const analisarCanvasOMR = (canvas) => {
     const qCount = parseInt(numQuestoes) || 1;
     const ctx = canvas.getContext('2d');
@@ -192,7 +186,6 @@ export default function App() {
     return respuestas;
   };
 
-  // --- Processamento de Imagem Universal (Upload e Câmera) ---
   const processarArquivoImagem = (file, nomeAluno) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -216,7 +209,6 @@ export default function App() {
     });
   };
 
-  // --- Handlers de Upload ---
   const handleFileUpload = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       setArquivosUpload(prev => [...prev, ...Array.from(e.target.files)]);
@@ -240,7 +232,6 @@ export default function App() {
     }
   };
 
-  // --- Handlers da Câmera Nativa ---
   const handleCameraCapture = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -263,7 +254,6 @@ export default function App() {
     }
   };
 
-  // --- Resultados e Dados ---
   const limparDados = () => {
     if(window.confirm("Apagar todos os dados da memória?")) setProvasLidas([]);
   };
@@ -290,7 +280,6 @@ export default function App() {
     return { ranking, porcentagemTurma };
   }, [provasLidas, gabaritoOficial, numQuestoes]);
 
-  // O botão de download CSV continua o mesmo, pois dados em texto puro (.csv) geralmente não dão problema em WebViews
   const exportarCSV = () => {
     const qCount = parseInt(numQuestoes) || 1;
     if (!dadosProcessados) return;
@@ -312,7 +301,6 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // --- RENDERS DAS TELAS ---
   const renderSetup = () => (
     <div className="max-w-3xl mx-auto bg-white p-6 rounded-xl shadow-sm border border-slate-200">
       <div className="flex flex-col gap-4 mb-6 justify-between border-b border-slate-100 pb-4">
@@ -379,7 +367,7 @@ export default function App() {
           <input 
             type="file" 
             accept="image/*" 
-            capture="environment" // Este comando mágico invoca a câmera do celular diretamente!
+            capture="environment" 
             className="hidden" 
             onChange={handleCameraCapture} 
             disabled={!nomeAlunoCamera.trim() || isScanning} 
@@ -529,7 +517,7 @@ export default function App() {
           
           <div className="bg-indigo-600 text-white p-4 rounded-xl max-w-sm w-full text-center shadow-lg">
             <p className="font-bold text-lg mb-1">Folha Pronta!</p>
-            <p className="text-sm opacity-90">Toque e <strong>segure o dedo</strong> em cima da imagem acima para salvá-la no seu celular ou enviá-la.</p>
+            <p className="text-sm opacity-90">Toque e <strong>segure o dedo</strong> em cima da imagem acima para salvá-la no seu celular.</p>
           </div>
         </div>
       )}
