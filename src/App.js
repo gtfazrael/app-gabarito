@@ -1,4 +1,3 @@
-```react
 import React, { useState, useMemo } from 'react';
 import { 
   Upload, CheckCircle, FileText, BarChart3, 
@@ -25,42 +24,72 @@ export default function App() {
 
   const handleNumQuestoesChange = (e) => {
     const valStr = e.target.value;
-    if (valStr === '') { setNumQuestoes(''); return; }
+    if (valStr === '') { 
+      setNumQuestoes(''); 
+      return; 
+    }
     const val = parseInt(valStr);
     if (!isNaN(val)) {
       setNumQuestoes(val);
-      if (val > 0 && val <= 100) setGabaritoOficial(Array(val).fill('A'));
+      if (val > 0 && val <= 100) {
+        setGabaritoOficial(Array(val).fill('A'));
+      }
     }
   };
 
   const handleNumQuestoesBlur = () => {
     let val = parseInt(numQuestoes);
-    if (isNaN(val) || val < 1) val = 1;
-    if (val > 100) val = 100;
+    if (isNaN(val) || val < 1) {
+      val = 1;
+    }
+    if (val > 100) {
+      val = 100;
+    }
     setNumQuestoes(val);
     setGabaritoOficial(Array(val).fill('A'));
   };
 
   const handleNumAlternativasChange = (e) => {
     const valStr = e.target.value;
-    if (valStr === '') { setNumAlternativas(''); return; }
+    if (valStr === '') { 
+      setNumAlternativas(''); 
+      return; 
+    }
     const val = parseInt(valStr);
     if (!isNaN(val)) {
       setNumAlternativas(val);
       if (val >= 2 && val <= 5) {
         const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
-        setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
+        setGabaritoOficial(prev => {
+          return prev.map(resp => {
+            if (novasAlternativas.includes(resp)) {
+              return resp;
+            }
+            return 'A';
+          });
+        });
       }
     }
   };
 
   const handleNumAlternativasBlur = () => {
     let val = parseInt(numAlternativas);
-    if (isNaN(val) || val < 2) val = 2;
-    if (val > 5) val = 5;
+    if (isNaN(val) || val < 2) {
+      val = 2;
+    }
+    if (val > 5) {
+      val = 5;
+    }
     setNumAlternativas(val);
     const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
-    setGabaritoOficial(prev => prev.map(resp => novasAlternativas.includes(resp) ? resp : 'A'));
+    setGabaritoOficial(prev => {
+      return prev.map(resp => {
+        if (novasAlternativas.includes(resp)) {
+          return resp;
+        }
+        return 'A';
+      });
+    });
   };
 
   const gerarFolhaNaTela = () => {
@@ -98,7 +127,7 @@ export default function App() {
     ctx.strokeStyle = '#000000';
     ctx.strokeRect(boxStartX, boxStartY, boxWidth, boxHeight);
     
-    for(let i = 0; i < qCount; i++) {
+    for (let i = 0; i < qCount; i++) {
       ctx.font = 'bold 24px Arial';
       ctx.fillStyle = '#000000';
       ctx.fillText((i + 1) + '.', boxStartX + 30, boxStartY + 40 + (i * 60));
@@ -129,17 +158,20 @@ export default function App() {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
-    let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = 0;
+    let maxY = 0;
     
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const i = (y * canvas.width + x) * 4;
         const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
         if (gray < 130) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
+          if (x < minX) { minX = x; }
+          if (x > maxX) { maxX = x; }
+          if (y < minY) { minY = y; }
+          if (y > maxY) { maxY = y; }
         }
       }
     }
@@ -147,7 +179,9 @@ export default function App() {
     const gridW = maxX - minX;
     const gridH = maxY - minY;
 
-    if (gridW <= 0 || gridH <= 0) return Array(qCount).fill('-');
+    if (gridW <= 0 || gridH <= 0) {
+      return Array(qCount).fill('-');
+    }
 
     const cellW = gridW / alternativasInUse.length;
     const cellH = gridH / qCount;
@@ -170,7 +204,9 @@ export default function App() {
           for (let x = startX; x < endX; x++) {
             const i = (y * canvas.width + x) * 4;
             const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            if (gray < 140) darkCount++; 
+            if (gray < 140) {
+              darkCount++;
+            }
             totalCount++;
           }
         }
@@ -181,7 +217,12 @@ export default function App() {
           bestAlt = alternativasInUse[a];
         }
       }
-      respuestas.push(maxDarkness < 0.05 ? '-' : bestAlt);
+      
+      if (maxDarkness < 0.05) {
+        respuestas.push('-');
+      } else {
+        respuestas.push(bestAlt);
+      }
     }
     return respuestas;
   };
@@ -204,26 +245,34 @@ export default function App() {
           respostas: respostas
         });
       };
-      img.onerror = () => reject("Erro ao ler imagem");
+      img.onerror = () => {
+        reject("Erro ao ler imagem");
+      };
       img.src = URL.createObjectURL(file);
     });
   };
 
   const handleFileUpload = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setArquivosUpload(prev => [...prev, ...Array.from(e.target.files)]);
+      setArquivosUpload(prev => {
+        return [...prev, ...Array.from(e.target.files)];
+      });
     }
   };
 
   const processarImagensUpload = async () => {
-    if (arquivosUpload.length === 0) return;
+    if (arquivosUpload.length === 0) {
+      return;
+    }
     setIsScanning(true);
     try {
       const novosAlunos = await Promise.all(arquivosUpload.map(async (arquivo) => {
         const nomeGerado = arquivo.name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
         return await processarArquivoImagem(arquivo, nomeGerado);
       }));
-      setProvasLidas(prev => [...prev, ...novosAlunos]);
+      setProvasLidas(prev => {
+        return [...prev, ...novosAlunos];
+      });
       setArquivosUpload([]);
     } catch (error) {
       alert("Erro ao processar as imagens.");
@@ -234,7 +283,9 @@ export default function App() {
 
   const handleCameraCapture = async (e) => {
     const file = e.target.files[0];
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     if (!nomeAlunoCamera.trim()) {
       alert("Por favor, digite o nome do aluno antes de tirar a foto.");
@@ -244,9 +295,11 @@ export default function App() {
     setIsScanning(true);
     try {
       const novaProva = await processarArquivoImagem(file, nomeAlunoCamera);
-      setProvasLidas(prev => [...prev, novaProva]);
+      setProvasLidas(prev => {
+        return [...prev, novaProva];
+      });
       setNomeAlunoCamera('');
-      alert(`Prova de ${nomeAlunoCamera} escaneada com sucesso!`);
+      alert("Prova escaneada com sucesso!");
     } catch (error) {
       alert("Ocorreu um erro ao ler a foto.");
     } finally {
@@ -255,40 +308,57 @@ export default function App() {
   };
 
   const limparDados = () => {
-    if(window.confirm("Apagar todos os dados da memória?")) setProvasLidas([]);
+    if (window.confirm("Apagar todos os dados da memória?")) {
+      setProvasLidas([]);
+    }
   };
 
   const dadosProcessados = useMemo(() => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (provasLidas.length === 0) return null;
+    if (provasLidas.length === 0) {
+      return null;
+    }
     let totalAcertosTurma = 0;
 
     const alunosProcessados = provasLidas.map(aluno => {
       let acertos = 0;
       const correcao = aluno.respostas.map((resp, index) => {
         const isCorreto = resp === gabaritoOficial[index];
-        if (isCorreto) acertos++;
+        if (isCorreto) {
+          acertos++;
+        }
         return isCorreto; 
       });
       totalAcertosTurma += acertos;
-      return { ...aluno, acertos, porcentagem: (acertos / qCount) * 100, correcao };
+      return { 
+        ...aluno, 
+        acertos: acertos, 
+        porcentagem: (acertos / qCount) * 100, 
+        correcao: correcao 
+      };
     });
 
     const ranking = [...alunosProcessados].sort((a, b) => b.acertos - a.acertos);
     const porcentagemTurma = ((totalAcertosTurma / (provasLidas.length * qCount)) * 100).toFixed(1);
 
-    return { ranking, porcentagemTurma };
+    return { ranking: ranking, porcentagemTurma: porcentagemTurma };
   }, [provasLidas, gabaritoOficial, numQuestoes]);
 
   const exportarCSV = () => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (!dadosProcessados) return;
+    if (!dadosProcessados) {
+      return;
+    }
     let csv = "Nome,Acertos,%,";
-    for(let i=1; i<=qCount; i++) csv += `Q${i},`;
+    for (let i = 1; i <= qCount; i++) {
+      csv += "Q" + i + ",";
+    }
     csv += "\n";
     dadosProcessados.ranking.forEach(aluno => {
-      csv += `"${aluno.nome}",${aluno.acertos},${aluno.porcentagem.toFixed(1)}%,`;
-      aluno.respostas.forEach(resp => csv += `${resp},`);
+      csv += '"' + aluno.nome + '",' + aluno.acertos + ',' + aluno.porcentagem.toFixed(1) + '%,';
+      aluno.respostas.forEach(resp => {
+        csv += resp + ",";
+      });
       csv += "\n";
     });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -299,6 +369,42 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Funções Auxiliares de Estilização Segura
+  const getLabelClassCamera = () => {
+    let base = "w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors ";
+    if (!nomeAlunoCamera.trim()) {
+      return base + "bg-slate-50 border-slate-300 text-slate-400";
+    }
+    return base + "bg-indigo-50 border-indigo-400 text-indigo-700";
+  };
+
+  const getCellClassResult = (isCorreto, isBranco) => {
+    let base = "p-3 text-center border-l border-white ";
+    if (isCorreto) {
+      return base + "bg-blue-100 text-blue-700";
+    }
+    if (isBranco) {
+      return base + "bg-slate-100 text-slate-400";
+    }
+    return base + "bg-red-100 text-red-700";
+  };
+
+  const renderNavButton = (id, name, Icon) => {
+    const isActive = view === id;
+    let btnClass = "flex flex-col items-center justify-center flex-1 py-2 text-xs font-bold transition-colors ";
+    if (isActive) {
+      btnClass += "text-indigo-600";
+    } else {
+      btnClass += "text-slate-400";
+    }
+    return (
+      <button key={id} onClick={() => setView(id)} className={btnClass}>
+        <Icon className="w-5 h-5 mb-0.5" />
+        <span>{name}</span>
+      </button>
+    );
   };
 
   const renderSetup = () => (
@@ -338,7 +444,9 @@ export default function App() {
                 nv[index] = e.target.value;
                 setGabaritoOficial(nv);
               }} className="flex-1 border-0 font-bold bg-transparent text-indigo-700 focus:ring-0">
-                {alternativasInUse.map(alt => <option key={alt} value={alt}>{alt}</option>)}
+                {alternativasInUse.map(alt => (
+                  <option key={alt} value={alt}>{alt}</option>
+                ))}
               </select>
             </div>
           ))}
@@ -350,20 +458,22 @@ export default function App() {
   const renderCamera = () => (
     <div className="max-w-xl mx-auto space-y-4">
       <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 mb-4 text-sm text-amber-800 font-medium">
-        💡 <strong>Dica:</strong> Na hora de tirar a foto, preencha a tela do seu celular focando o máximo possível <strong>apenas na caixa retangular preta</strong> contendo as bolinhas.
+        DICA: Na hora de tirar a foto, preencha a tela do seu celular focando o máximo possível APENAS na caixa retangular preta contendo as bolinhas.
       </div>
 
       <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
         <div className="mb-6">
           <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Nome do Aluno:</label>
           <input 
-            type="text" value={nomeAlunoCamera} onChange={(e) => setNomeAlunoCamera(e.target.value)} 
+            type="text" 
+            value={nomeAlunoCamera} 
+            onChange={(e) => setNomeAlunoCamera(e.target.value)} 
             placeholder="Ex: Ana Silva"
             className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 font-medium text-lg"
           />
         </div>
 
-        <label className={`w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors ${!nomeAlunoCamera.trim() ? 'bg-slate-50 border-slate-300 text-slate-400' : 'bg-indigo-50 border-indigo-400 text-indigo-700'}`}>
+        <label className={getLabelClassCamera()}>
           <input 
             type="file" 
             accept="image/*" 
@@ -378,10 +488,10 @@ export default function App() {
                Analisando Pixels...
             </div>
           ) : (
-            <>
-              <Camera className="w-10 h-10" /> 
+            <div className="flex flex-col items-center">
+              <Camera className="w-10 h-10 mb-2" /> 
               <span>Tirar Foto da Prova</span>
-            </>
+            </div>
           )}
         </label>
       </div>
@@ -459,7 +569,7 @@ export default function App() {
                       const isCorreto = aluno.correcao[i];
                       const isBranco = resp === '-';
                       return (
-                        <td key={i} className={`p-3 text-center border-l border-white ${isCorreto ? 'bg-blue-100 text-blue-700' : isBranco ? 'bg-slate-100 text-slate-400' : 'bg-red-100 text-red-700'}`}>
+                        <td key={i} className={getCellClassResult(isCorreto, isBranco)}>
                           {resp}
                         </td>
                       );
@@ -477,13 +587,6 @@ export default function App() {
     );
   };
 
-  const NavButton = ({ id, name, icon: Icon }) => (
-    <button onClick={() => setView(id)} className={`flex flex-col items-center justify-center flex-1 py-2 text-xs font-bold transition-colors ${view === id ? 'text-indigo-600' : 'text-slate-400'}`}>
-      <Icon className="w-5 h-5 mb-0.5" />
-      <span>{name}</span>
-    </button>
-  );
-
   return (
     <div className="min-h-screen font-sans bg-slate-50 pb-20 relative">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 shadow-sm">
@@ -491,21 +594,20 @@ export default function App() {
       </header>
 
       <main className="px-4 py-6 max-w-md mx-auto">
-        {view === 'setup' && renderSetup()}
-        {view === 'camera' && renderCamera()}
-        {view === 'upload' && renderUpload()}
-        {view === 'results' && renderResults()}
+        {view === 'setup' ? renderSetup() : null}
+        {view === 'camera' ? renderCamera() : null}
+        {view === 'upload' ? renderUpload() : null}
+        {view === 'results' ? renderResults() : null}
       </main>
 
       <nav className="bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-40 flex justify-around shadow-lg px-2">
-        <NavButton id="setup" name="Config" icon={Settings} />
-        <NavButton id="camera" name="Câmera" icon={Camera} />
-        <NavButton id="upload" name="Galeria" icon={Upload} />
-        <NavButton id="results" name="Planilha" icon={BarChart3} />
+        {renderNavButton('setup', 'Config', Settings)}
+        {renderNavButton('camera', 'Câmera', Camera)}
+        {renderNavButton('upload', 'Galeria', Upload)}
+        {renderNavButton('results', 'Planilha', BarChart3)}
       </nav>
 
-      {/* Modal Segura para Download da Folha */}
-      {previewFolha && (
+      {previewFolha ? (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
           <button onClick={() => setPreviewFolha(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white">
             <X className="w-6 h-6" />
@@ -517,13 +619,10 @@ export default function App() {
           
           <div className="bg-indigo-600 text-white p-4 rounded-xl max-w-sm w-full text-center shadow-lg">
             <p className="font-bold text-lg mb-1">Folha Pronta!</p>
-            <p className="text-sm opacity-90">Toque e <strong>segure o dedo</strong> em cima da imagem acima para salvá-la no seu celular.</p>
+            <p className="text-sm opacity-90">Toque e segure o dedo em cima da imagem acima para salvá-la no seu celular.</p>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
-
-
-```
