@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
-  Upload, CheckCircle, FileText, BarChart3, 
-  Settings, Download, AlertCircle, ChevronRight,
-  Camera, X, Image as ImageIcon
+  Upload, FileText, BarChart3, 
+  Settings, Download, 
+  Camera, X, Image as ImageIcon, ScanLine
 } from 'lucide-react';
 
 export default function App() {
@@ -16,6 +16,25 @@ export default function App() {
   
   const [previewFolha, setPreviewFolha] = useState(null);
   const [nomeAlunoCamera, setNomeAlunoCamera] = useState('');
+
+  // Estados e Referências para a Câmera Integrada
+  const videoRef = useRef(null);
+  const [streamAtivo, setStreamAtivo] = useState(null);
+
+  // Desliga a câmera automaticamente ao sair da aba (Código blindado para o ESLint do GitHub)
+  useEffect(() => {
+    if (view !== 'camera' && streamAtivo) {
+      streamAtivo.getTracks().forEach(track => track.stop());
+      setStreamAtivo(null);
+    }
+  }, [view, streamAtivo]);
+
+  const pararCamera = () => {
+    if (streamAtivo) {
+      streamAtivo.getTracks().forEach(track => track.stop());
+      setStreamAtivo(null);
+    }
+  };
 
   const alternativasInUse = useMemo(() => {
     const qtde = parseInt(numAlternativas) || 2;
@@ -39,12 +58,8 @@ export default function App() {
 
   const handleNumQuestoesBlur = () => {
     let val = parseInt(numQuestoes);
-    if (isNaN(val) || val < 1) {
-      val = 1;
-    }
-    if (val > 100) {
-      val = 100;
-    }
+    if (isNaN(val) || val < 1) { val = 1; }
+    if (val > 100) { val = 100; }
     setNumQuestoes(val);
     setGabaritoOficial(Array(val).fill('A'));
   };
@@ -62,9 +77,7 @@ export default function App() {
         const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
         setGabaritoOficial(prev => {
           return prev.map(resp => {
-            if (novasAlternativas.includes(resp)) {
-              return resp;
-            }
+            if (novasAlternativas.includes(resp)) { return resp; }
             return 'A';
           });
         });
@@ -74,24 +87,19 @@ export default function App() {
 
   const handleNumAlternativasBlur = () => {
     let val = parseInt(numAlternativas);
-    if (isNaN(val) || val < 2) {
-      val = 2;
-    }
-    if (val > 5) {
-      val = 5;
-    }
+    if (isNaN(val) || val < 2) { val = 2; }
+    if (val > 5) { val = 5; }
     setNumAlternativas(val);
     const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
     setGabaritoOficial(prev => {
       return prev.map(resp => {
-        if (novasAlternativas.includes(resp)) {
-          return resp;
-        }
+        if (novasAlternativas.includes(resp)) { return resp; }
         return 'A';
       });
     });
   };
 
+  // --- GERADOR DA FOLHA DE RESPOSTAS ---
   const gerarFolhaNaTela = () => {
     const qCount = parseInt(numQuestoes) || 1;
     const canvas = document.createElement('canvas');
@@ -113,11 +121,12 @@ export default function App() {
     ctx.fillText('Aluno(a): _________________________________________________', 50, 130);
     
     ctx.font = 'bold 16px Arial';
-    ctx.fillText('INSTRUÇÕES:', 50, 180);
+    ctx.fillText('INSTRUÇÕES PARA O ALUNO E PROFESSOR:', 50, 180);
     ctx.font = '16px Arial';
-    ctx.fillText('- Preencha a bolinha completamente escura.', 50, 205);
-    ctx.fillText('- Na hora de fotografar, enquadre APENAS a caixa preta abaixo.', 50, 230);
+    ctx.fillText('- Preencha a bolinha completamente escura (use caneta preta ou azul).', 50, 205);
+    ctx.fillText('- Na hora de fotografar, enquadre APENAS a CAIXA PRETA contendo as bolinhas.', 50, 230);
     
+    // Caixa delimitadora (essencial para a leitura OMR)
     const boxStartX = 50;
     const boxStartY = 280;
     const boxWidth = 700;
@@ -152,6 +161,7 @@ export default function App() {
     setPreviewFolha(canvas.toDataURL('image/png'));
   };
 
+  // --- MOTOR ANALISADOR OMR (OFFLINE) ---
   const analisarCanvasOMR = (canvas) => {
     const qCount = parseInt(numQuestoes) || 1;
     const ctx = canvas.getContext('2d');
@@ -163,11 +173,12 @@ export default function App() {
     let maxX = 0;
     let maxY = 0;
     
+    // 1. Encontra a Caixa Preta (Bounding Box) ignorando sombras leves
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const i = (y * canvas.width + x) * 4;
         const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-        if (gray < 130) {
+        if (gray < 100) { 
           if (x < minX) { minX = x; }
           if (x > maxX) { maxX = x; }
           if (y < minY) { minY = y; }
@@ -187,6 +198,7 @@ export default function App() {
     const cellH = gridH / qCount;
     const respuestas = [];
 
+    // 2. Analisa cada quadrante de bolinha
     for (let q = 0; q < qCount; q++) {
       let maxDarkness = -1;
       let bestAlt = '-';
@@ -204,7 +216,7 @@ export default function App() {
           for (let x = startX; x < endX; x++) {
             const i = (y * canvas.width + x) * 4;
             const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            if (gray < 140) {
+            if (gray < 120) {
               darkCount++;
             }
             totalCount++;
@@ -218,7 +230,7 @@ export default function App() {
         }
       }
       
-      if (maxDarkness < 0.05) {
+      if (maxDarkness < 0.15) {
         respuestas.push('-');
       } else {
         respuestas.push(bestAlt);
@@ -227,6 +239,71 @@ export default function App() {
     return respuestas;
   };
 
+  // --- FUNÇÕES DA CÂMERA INTEGRADA ---
+  const iniciarCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+      });
+      setStreamAtivo(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      alert("Erro ao acessar a câmera. Verifique se o aplicativo tem permissão.");
+    }
+  };
+
+  const capturarDaCamera = () => {
+    if (!nomeAlunoCamera.trim()) {
+      alert("Por favor, digite o nome do aluno antes de escanear.");
+      return;
+    }
+    if (!videoRef.current) {
+      return;
+    }
+
+    setIsScanning(true);
+    try {
+      const video = videoRef.current;
+      const canvasTotal = document.createElement('canvas');
+      canvasTotal.width = video.videoWidth;
+      canvasTotal.height = video.videoHeight;
+      const ctxTotal = canvasTotal.getContext('2d');
+      ctxTotal.drawImage(video, 0, 0, canvasTotal.width, canvasTotal.height);
+
+      // Recorta a imagem baseando-se na área da "Mira" verde da tela
+      const cropW = canvasTotal.width * 0.9; 
+      const cropH = canvasTotal.height * 0.8;
+      const cropX = (canvasTotal.width - cropW) / 2;
+      const cropY = (canvasTotal.height - cropH) / 2;
+
+      const canvasRecortado = document.createElement('canvas');
+      canvasRecortado.width = cropW;
+      canvasRecortado.height = cropH;
+      const ctxRecortado = canvasRecortado.getContext('2d');
+      ctxRecortado.drawImage(canvasTotal, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      const respostas = analisarCanvasOMR(canvasRecortado);
+
+      setProvasLidas(prev => {
+        return [...prev, {
+          id: Math.random().toString(36).substr(2, 9),
+          nome: nomeAlunoCamera,
+          respostas: respostas
+        }];
+      });
+      
+      setNomeAlunoCamera('');
+      alert("Prova escaneada com sucesso!");
+    } catch (err) {
+      alert("Erro ao processar a imagem da câmera.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // --- FUNÇÕES DE UPLOAD (GALERIA) ---
   const processarArquivoImagem = (file, nomeAluno) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -245,34 +322,26 @@ export default function App() {
           respostas: respostas
         });
       };
-      img.onerror = () => {
-        reject("Erro ao ler imagem");
-      };
+      img.onerror = () => { reject("Erro ao ler imagem"); };
       img.src = URL.createObjectURL(file);
     });
   };
 
   const handleFileUpload = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setArquivosUpload(prev => {
-        return [...prev, ...Array.from(e.target.files)];
-      });
+      setArquivosUpload(prev => { return [...prev, ...Array.from(e.target.files)]; });
     }
   };
 
   const processarImagensUpload = async () => {
-    if (arquivosUpload.length === 0) {
-      return;
-    }
+    if (arquivosUpload.length === 0) { return; }
     setIsScanning(true);
     try {
       const novosAlunos = await Promise.all(arquivosUpload.map(async (arquivo) => {
         const nomeGerado = arquivo.name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
         return await processarArquivoImagem(arquivo, nomeGerado);
       }));
-      setProvasLidas(prev => {
-        return [...prev, ...novosAlunos];
-      });
+      setProvasLidas(prev => { return [...prev, ...novosAlunos]; });
       setArquivosUpload([]);
     } catch (error) {
       alert("Erro ao processar as imagens.");
@@ -281,52 +350,21 @@ export default function App() {
     }
   };
 
-  const handleCameraCapture = async (e) => {
-    const file = e.target.files[0];
-    if (!file) {
-      return;
-    }
-
-    if (!nomeAlunoCamera.trim()) {
-      alert("Por favor, digite o nome do aluno antes de tirar a foto.");
-      return;
-    }
-
-    setIsScanning(true);
-    try {
-      const novaProva = await processarArquivoImagem(file, nomeAlunoCamera);
-      setProvasLidas(prev => {
-        return [...prev, novaProva];
-      });
-      setNomeAlunoCamera('');
-      alert("Prova escaneada com sucesso!");
-    } catch (error) {
-      alert("Ocorreu um erro ao ler a foto.");
-    } finally {
-      setIsScanning(false);
-    }
-  };
-
+  // --- RESULTADOS E PLANILHA ---
   const limparDados = () => {
-    if (window.confirm("Apagar todos os dados da memória?")) {
-      setProvasLidas([]);
-    }
+    if (window.confirm("Apagar todos os dados da memória?")) { setProvasLidas([]); }
   };
 
   const dadosProcessados = useMemo(() => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (provasLidas.length === 0) {
-      return null;
-    }
+    if (provasLidas.length === 0) { return null; }
     let totalAcertosTurma = 0;
 
     const alunosProcessados = provasLidas.map(aluno => {
       let acertos = 0;
       const correcao = aluno.respostas.map((resp, index) => {
         const isCorreto = resp === gabaritoOficial[index];
-        if (isCorreto) {
-          acertos++;
-        }
+        if (isCorreto) { acertos++; }
         return isCorreto; 
       });
       totalAcertosTurma += acertos;
@@ -346,19 +384,13 @@ export default function App() {
 
   const exportarCSV = () => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (!dadosProcessados) {
-      return;
-    }
+    if (!dadosProcessados) { return; }
     let csv = "Nome,Acertos,%,";
-    for (let i = 1; i <= qCount; i++) {
-      csv += "Q" + i + ",";
-    }
+    for (let i = 1; i <= qCount; i++) { csv += "Q" + i + ","; }
     csv += "\n";
     dadosProcessados.ranking.forEach(aluno => {
       csv += '"' + aluno.nome + '",' + aluno.acertos + ',' + aluno.porcentagem.toFixed(1) + '%,';
-      aluno.respostas.forEach(resp => {
-        csv += resp + ",";
-      });
+      aluno.respostas.forEach(resp => { csv += resp + ","; });
       csv += "\n";
     });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -371,34 +403,19 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // Funções Auxiliares de Estilização Segura
-  const getLabelClassCamera = () => {
-    let base = "w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors ";
-    if (!nomeAlunoCamera.trim()) {
-      return base + "bg-slate-50 border-slate-300 text-slate-400";
-    }
-    return base + "bg-indigo-50 border-indigo-400 text-indigo-700";
-  };
-
+  // --- ESTILIZAÇÃO E COMPONENTES VISUAIS ---
   const getCellClassResult = (isCorreto, isBranco) => {
-    let base = "p-3 text-center border-l border-white ";
-    if (isCorreto) {
-      return base + "bg-blue-100 text-blue-700";
-    }
-    if (isBranco) {
-      return base + "bg-slate-100 text-slate-400";
-    }
+    let base = "p-3 text-center border-l border-white font-bold ";
+    if (isCorreto) { return base + "bg-blue-100 text-blue-700"; }
+    if (isBranco) { return base + "bg-slate-100 text-slate-400"; }
     return base + "bg-red-100 text-red-700";
   };
 
   const renderNavButton = (id, name, Icon) => {
     const isActive = view === id;
     let btnClass = "flex flex-col items-center justify-center flex-1 py-2 text-xs font-bold transition-colors ";
-    if (isActive) {
-      btnClass += "text-indigo-600";
-    } else {
-      btnClass += "text-slate-400";
-    }
+    if (isActive) { btnClass += "text-indigo-600"; } 
+    else { btnClass += "text-slate-400"; }
     return (
       <button key={id} onClick={() => setView(id)} className={btnClass}>
         <Icon className="w-5 h-5 mb-0.5" />
@@ -458,7 +475,7 @@ export default function App() {
   const renderCamera = () => (
     <div className="max-w-xl mx-auto space-y-4">
       <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 mb-4 text-sm text-amber-800 font-medium">
-        DICA: Na hora de tirar a foto, preencha a tela do seu celular focando o máximo possível APENAS na caixa retangular preta contendo as bolinhas.
+        DICA: Na hora de capturar, certifique-se de que a <strong>caixa retangular preta</strong> do gabarito esteja alinhada dentro da área pontilhada verde na tela.
       </div>
 
       <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
@@ -473,27 +490,53 @@ export default function App() {
           />
         </div>
 
-        <label className={getLabelClassCamera()}>
-          <input 
-            type="file" 
-            accept="image/*" 
-            capture="environment" 
-            className="hidden" 
-            onChange={handleCameraCapture} 
-            disabled={!nomeAlunoCamera.trim() || isScanning} 
-          />
-          {isScanning ? (
-            <div className="flex items-center gap-2 text-indigo-600">
-               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
-               Analisando Pixels...
+        {!streamAtivo ? (
+          <button 
+            onClick={iniciarCamera} 
+            className="w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors bg-indigo-50 border-indigo-400 text-indigo-700"
+          >
+            <Camera className="w-10 h-10 mb-2" /> 
+            <span>Ligar Câmera Integrada</span>
+          </button>
+        ) : (
+          <div className="relative rounded-xl overflow-hidden bg-black border border-slate-800 shadow-inner">
+            <video ref={videoRef} autoPlay playsInline className="w-full h-auto max-h-[55vh] object-cover" />
+            
+            <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
+              <div className="w-[90%] h-[80%] border-4 border-green-400 border-dashed relative rounded shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                <div className="absolute -top-7 left-0 right-0 text-center text-white text-xs font-bold bg-black/60 py-0.5 px-2 rounded">
+                  Enquadre a caixa preta do gabarito aqui
+                </div>
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-col items-center">
-              <Camera className="w-10 h-10 mb-2" /> 
-              <span>Tirar Foto da Prova</span>
-            </div>
-          )}
-        </label>
+            
+            <button onClick={pararCamera} className="absolute top-2 right-2 z-20 bg-red-600 p-2 rounded-full text-white shadow-lg">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+
+        {streamAtivo ? (
+          <button 
+            onClick={capturarDaCamera}
+            disabled={isScanning || !nomeAlunoCamera.trim()}
+            className={`w-full mt-6 py-4 rounded-xl font-bold text-white flex justify-center items-center gap-2 shadow-lg transition-colors ${
+              !nomeAlunoCamera.trim() ? 'bg-slate-400' : 'bg-green-600 hover:bg-green-700'
+            }`}
+          >
+            {isScanning ? (
+              <div className="flex items-center gap-2 text-white">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                Analisando Pixels...
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-white">
+                <ScanLine className="w-6 h-6" />
+                Capturar e Corrigir Prova
+              </div>
+            )}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -559,12 +602,12 @@ export default function App() {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs font-bold">
+              <tbody className="divide-y divide-slate-100 text-xs">
                 {dadosProcessados.ranking.map((aluno, index) => (
                   <tr key={aluno.id} className="hover:bg-slate-50/80">
-                    <td className="p-3 text-slate-400">{index + 1}º</td>
-                    <td className="p-3 text-slate-800 whitespace-nowrap">{aluno.nome}</td>
-                    <td className="p-3 text-center text-indigo-700 bg-indigo-50/30">{aluno.acertos}</td>
+                    <td className="p-3 text-slate-400 font-bold">{index + 1}º</td>
+                    <td className="p-3 text-slate-800 font-bold whitespace-nowrap">{aluno.nome}</td>
+                    <td className="p-3 text-center font-bold text-indigo-700 bg-indigo-50/30">{aluno.acertos}</td>
                     {aluno.respostas.map((resp, i) => {
                       const isCorreto = aluno.correcao[i];
                       const isBranco = resp === '-';
@@ -619,7 +662,7 @@ export default function App() {
           
           <div className="bg-indigo-600 text-white p-4 rounded-xl max-w-sm w-full text-center shadow-lg">
             <p className="font-bold text-lg mb-1">Folha Pronta!</p>
-            <p className="text-sm opacity-90">Toque e segure o dedo em cima da imagem acima para salvá-la no seu celular.</p>
+            <p className="text-sm opacity-90">Toque e segure o dedo em cima da imagem acima para salvá-la no seu celular ou compartilhá-la.</p>
           </div>
         </div>
       ) : null}
