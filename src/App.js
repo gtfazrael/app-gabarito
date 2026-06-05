@@ -3,7 +3,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   FileText, BarChart3, 
   Settings, Download, 
-  Camera, X, Image as ImageIcon, ScanLine, Share2, Trash2, Save, FileUp, CheckCircle2, Focus, Printer
+  Camera, X, Image as ImageIcon, ScanLine, Share2, Trash2, Save, FileUp, CheckCircle2, Focus, Copy, AlertTriangle
 } from 'lucide-react';
 
 const BOX_W = 1080;
@@ -29,17 +29,20 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   
+  // Estado para fallback de exportação (quando o Android bloqueia o download do arquivo CSV)
+  const [csvFallbackData, setCsvFallbackData] = useState(null);
+  const [permissaoNegada, setPermissaoNegada] = useState(false);
+  
   const videoRef = useRef(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [streamAtivo, setStreamAtivo] = useState(null);
   
-  // Memória temporária para estabilizar a leitura da câmera
   const scanBufferRef = useRef([]);
 
   // === 1. MEMÓRIA OFFLINE ===
   useEffect(() => {
     try {
-      const dadosSalvos = localStorage.getItem('gabaritoPro_dados_v6');
+      const dadosSalvos = localStorage.getItem('gabaritoPro_dados_v8');
       if (dadosSalvos) {
         const parsed = JSON.parse(dadosSalvos);
         if (parsed.provasLidas) setProvasLidas(parsed.provasLidas);
@@ -57,11 +60,11 @@ export default function App() {
   useEffect(() => {
     try {
       const dadosParaSalvar = { provasLidas, gabaritoOficial, numAlternativas, nomeProva, turma };
-      localStorage.setItem('gabaritoPro_dados_v6', JSON.stringify(dadosParaSalvar));
+      localStorage.setItem('gabaritoPro_dados_v8', JSON.stringify(dadosParaSalvar));
     } catch (e) { console.error("Erro ao salvar:", e); }
   }, [provasLidas, gabaritoOficial, numAlternativas, nomeProva, turma]);
 
-  // === 2. GERENCIAMENTO DA CÂMERA ===
+  // === 2. CÂMERA E PERMISSÕES NATIVAS ===
   const pararCamera = () => {
     setIsCameraActive(false);
     if (streamAtivo) {
@@ -75,39 +78,28 @@ export default function App() {
     return () => pararCamera(); 
   }, [view]);
 
-  useEffect(() => {
-    let stream = null;
-    let isMounted = true;
-
-    const ligarLente = async () => {
-      if (isCameraActive && videoRef.current) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
-          });
-          if (isMounted) {
-            setStreamAtivo(stream);
-            if (videoRef.current) videoRef.current.srcObject = stream;
-          } else {
-             stream.getTracks().forEach(track => track.stop());
-          }
-        } catch (err) {
-          alert("Erro na câmera ao vivo. Use o botão de Leitura de Arquivos ou Backup.");
-          if (isMounted) setIsCameraActive(false);
-        }
+  // Função dedicada para solicitar permissão ao Android
+  const ligarCamera = async () => {
+    setPermissaoNegada(false);
+    try {
+      // Este comando força o navegador/Android a exibir o pop-up de permissão
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+      });
+      
+      setStreamAtivo(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
       }
-    };
-    ligarLente();
-    
-    return () => { 
-      isMounted = false;
-      if (stream) stream.getTracks().forEach(track => track.stop()); 
-    };
-  }, [isCameraActive]);
-
-  const ligarCamera = () => {
-    scanBufferRef.current = []; // Reseta o estabilizador
-    setIsCameraActive(true);
+      
+      scanBufferRef.current = []; 
+      setIsCameraActive(true); 
+    } catch(err) {
+      // Se o usuário negou ou o Android bloqueou, registramos o erro para exibir instruções
+      console.error("Erro de câmera:", err);
+      setPermissaoNegada(true);
+      setIsCameraActive(false);
+    }
   };
 
   const alternativasInUse = useMemo(() => {
@@ -272,78 +264,7 @@ export default function App() {
     }
   };
 
-  // === SOLUÇÃO DE IMPRESSÃO / EXPORTAÇÃO BLINDADA ===
-  const compartilharFolha = async () => {
-    try {
-      if (!previewFolha) return;
-      
-      // Conversão Base64 -> Blob manual (Evita erro de fetch no WebView Android)
-      const byteString = atob(previewFolha.split(',')[1]);
-      const mimeString = previewFolha.split(',')[0].split(':')[1].split(';')[0];
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-      }
-      const blob = new Blob([ab], {type: mimeString});
-      const file = new File([blob], `Gabarito_${turma.replace(/[^a-z0-9]/gi, '_')}.png`, { type: "image/png" });
-      
-      // Tenta usar a interface nativa de compartilhamento do celular
-      if (navigator.share) {
-        try {
-            await navigator.share({
-                files: [file],
-                title: 'Gabarito',
-                text: 'Folha de Gabarito para Impressão.'
-            });
-            return;
-        } catch (e) {
-            // Cancelou ou falhou, segue para o fallback abaixo
-        }
-      }
-      
-      // Fallback clássico de download
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); 
-      link.href = url; 
-      link.download = `Gabarito_${turma.replace(/[^a-z0-9]/gi, '_')}.png`; 
-      document.body.appendChild(link); 
-      link.click(); 
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 100);
-
-    } catch (error) {
-      alert("Seu celular bloqueou o envio. Pressione e segure o dedo em cima da imagem da folha e escolha 'Salvar na Galeria' ou 'Fazer o download da imagem'.");
-    }
-  };
-
-  const imprimirFolha = () => {
-    // Aciona a impressão nativa que permite salvar em PDF no Android
-    try {
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
-      iframe.contentDocument.write(`
-        <html>
-          <head><title>Imprimir Gabarito</title></head>
-          <body style="margin:0; padding:0; text-align:center;">
-            <img src="${previewFolha}" style="width:100%; max-width: 800px;" />
-          </body>
-        </html>
-      `);
-      iframe.contentDocument.close();
-      
-      setTimeout(() => {
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print();
-        setTimeout(() => document.body.removeChild(iframe), 1000);
-      }, 500);
-    } catch(e) {
-      alert("Erro ao abrir impressora. Tente a opção de Compartilhar.");
-    }
-  };
-
-  // === 5. MOTOR OMR GEOMÉTRICO (REFINADO) ===
+  // === 5. MOTOR OMR GEOMÉTRICO (REFINADO PARA ERROS) ===
   const analisarCanvasOMR = (canvas) => {
     const qCount = parseInt(numQuestoes) || 1;
     const altCount = alternativasInUse.length;
@@ -561,7 +482,8 @@ export default function App() {
     return { ranking, porcentagemTurma };
   }, [provasLidas, gabaritoOficial, numQuestoes]);
 
-  const exportarCSV = async () => {
+  // FUNÇÃO BLINDADA DE EXPORTAÇÃO CSV (COM FALLBACK VISUAL)
+  const exportarCSVSeguro = async () => {
     const qCount = parseInt(numQuestoes) || 1;
     if (!dadosProcessados) return; 
     
@@ -592,12 +514,14 @@ export default function App() {
       csv += `Questao ${i + 1},${totalErrosQuestao},${taxaErro}%\n`;
     }
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const fileName = `Resultados_${turma.replace(/[^a-z0-9]/gi, '_')}.csv`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
 
     try {
       const file = new File([blob], fileName, { type: "text/csv" });
-      if (navigator.share) {
+      
+      // Tenta compartilhar primeiro (método mais nativo no celular)
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
             files: [file],
@@ -605,11 +529,10 @@ export default function App() {
             text: 'Arquivo CSV gerado pelo GabaritoPro.'
           });
           return;
-        } catch(e) {
-          // Continua para o fallback de download
-        }
+        } catch(e) {} // Se usuário cancelar, continua
       } 
       
+      // Tenta o Download normal
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); 
       link.href = url; link.setAttribute('download', fileName);
@@ -619,7 +542,16 @@ export default function App() {
       setTimeout(() => URL.revokeObjectURL(url), 100);
       
     } catch (error) {
-      alert("Erro ao exportar a planilha. Tente enviar de outro dispositivo.");
+      // FALHA DE SEGURANÇA DO ANDROID -> Exibe o texto cru na tela para o professor copiar e colar!
+      setCsvFallbackData(csv);
+    }
+  };
+
+  const copiarCSVMenual = () => {
+    if (csvFallbackData) {
+      navigator.clipboard.writeText(csvFallbackData)
+        .then(() => alert("✅ Dados copiados! Pode colar no Excel ou no WhatsApp."))
+        .catch(() => alert("Erro ao copiar. Selecione o texto manualmente."));
     }
   };
 
@@ -673,7 +605,7 @@ export default function App() {
             </button>
 
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <h3 className="text-sm font-bold text-slate-700 uppercase mb-4">Gabarito Oficial</h3>
+              <h3 className="text-sm font-bold text-slate-700 uppercase mb-4">Gabarito Oficial do Professor</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {Array.isArray(gabaritoOficial) && gabaritoOficial.map((resp, index) => (
                   <div key={index} className="flex items-center gap-2 bg-white p-2 border rounded-lg shadow-sm">
@@ -694,13 +626,34 @@ export default function App() {
         {view === 'camera' && (
           <div className="max-w-xl mx-auto space-y-4">
             <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+              
+              {/* Aviso se a permissão foi negada no Android */}
+              {permissaoNegada && (
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r-lg">
+                  <h3 className="font-bold text-red-700 flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5"/> Permissão Necessária
+                  </h3>
+                  <p className="text-sm text-red-600 mt-2">
+                    O Android bloqueou o acesso à câmera. Para corrigir isso:
+                  </p>
+                  <ul className="text-xs text-red-600 mt-2 list-disc ml-5 space-y-1">
+                    <li>Vá em <strong>Configurações</strong> do seu celular.</li>
+                    <li>Toque em <strong>Aplicativos</strong> e ache o GabaritoPro.</li>
+                    <li>Toque em <strong>Permissões</strong> e permita a <strong>Câmera</strong>.</li>
+                  </ul>
+                  <button onClick={ligarCamera} className="mt-4 w-full bg-red-600 text-white py-2 rounded-lg font-bold text-sm">
+                    Já autorizei, tentar novamente
+                  </button>
+                </div>
+              )}
+
               {!isCameraActive ? (
                 <div className="flex flex-col gap-4">
                   <div className="text-center font-bold text-slate-400 text-xs uppercase mb-2">Correção Rápida Ao Vivo</div>
                   
                   <button type="button" onClick={ligarCamera} className="w-full py-6 flex flex-col items-center gap-2 border-2 border-dashed rounded-xl font-bold bg-indigo-50 border-indigo-400 text-indigo-700 hover:bg-indigo-100">
                     <Focus className="w-10 h-10 mb-1" /> 
-                    <span className="text-lg">Auto-Scanner (Câmera)</span>
+                    <span className="text-lg">Abrir Scanner (Câmera)</span>
                   </button>
 
                   <div className="relative flex py-5 items-center">
@@ -717,7 +670,7 @@ export default function App() {
                        <div className="flex flex-col items-center gap-2">
                          <FileUp className="w-10 h-10 mb-1 text-indigo-300" />
                          <span className="text-md">Upload de Imagens (Galeria)</span>
-                         <span className="text-[10px] text-slate-400 font-normal text-center px-4">Tirou várias fotos das provas? Faça upload delas de uma vez.</span>
+                         <span className="text-[10px] text-slate-400 font-normal text-center px-4">Tirou várias fotos das provas com o app de câmera? Faça o upload delas de uma vez por aqui.</span>
                        </div>
                     )}
                   </label>
@@ -725,7 +678,7 @@ export default function App() {
                   <label className="w-full py-4 flex flex-col items-center gap-2 border-2 border-dashed rounded-xl font-bold cursor-pointer bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 mt-2">
                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraCaptureBackup} disabled={isScanning} />
                      <Camera className="w-6 h-6 mb-1 text-slate-400" />
-                     <span className="text-sm">Tirar Foto Manual (Backup)</span>
+                     <span className="text-sm">Tirar Foto Manual (Modo Backup)</span>
                   </label>
                 </div>
               ) : (
@@ -784,8 +737,8 @@ export default function App() {
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                   <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-center bg-slate-50 gap-3">
                     <h2 className="font-bold text-slate-800 flex items-center gap-2"><Save className="w-5 h-5 text-green-500" /> Notas da Turma</h2>
-                    <button type="button" onClick={exportarCSV} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md">
-                      <Download className="w-5 h-5" /> Exportar Planilha Excel
+                    <button type="button" onClick={exportarCSVSeguro} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md">
+                      <Download className="w-5 h-5" /> Exportar Planilha (Excel/CSV)
                     </button>
                   </div>
                   
@@ -835,27 +788,53 @@ export default function App() {
         ))}
       </nav>
 
-      {/* MODALS */}
+      {/* MODALS DA FOLHA */}
       {previewFolha && (
         <div className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center p-4 backdrop-blur-sm">
           <button type="button" onClick={() => setPreviewFolha(null)} className="absolute top-4 right-4 bg-white/10 p-2 rounded-full text-white"><X className="w-8 h-8" /></button>
           
           <div className="bg-white p-3 rounded-2xl max-w-md w-full max-h-[60vh] overflow-y-auto mb-4 shadow-2xl relative">
-            <div className="absolute top-0 left-0 right-0 bg-yellow-400 text-black text-center text-xs font-bold py-1">
-              Segure o dedo na imagem para salvar na Galeria
+            <div className="absolute top-0 left-0 right-0 bg-yellow-400 text-black text-center text-xs font-bold py-2 px-2 z-10 rounded-t-xl shadow">
+              DICA: Pressione e segure o dedo sobre a folha para salvar na Galeria.
             </div>
-            <img src={previewFolha} alt="Folha de Respostas" className="w-full h-auto mt-4 border border-slate-200 rounded-lg" style={{ WebkitTouchCallout: 'default', userSelect: 'auto', pointerEvents: 'auto' }} />
+            <img src={previewFolha} alt="Folha de Respostas" className="w-full h-auto mt-6 border border-slate-200 rounded-lg" style={{ WebkitTouchCallout: 'default', userSelect: 'auto', pointerEvents: 'auto' }} />
           </div>
           
           <div className="max-w-md w-full flex flex-col gap-3">
-            <button type="button" onClick={imprimirFolha} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 py-3 rounded-xl font-black text-md flex items-center justify-center gap-2 shadow-lg">
-              <Printer className="w-5 h-5" /> Salvar como PDF / Imprimir
-            </button>
-            <button type="button" onClick={compartilharFolha} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-4 rounded-xl font-black text-lg flex items-center justify-center gap-2 shadow-lg">
-              <Share2 className="w-6 h-6" /> Enviar (Compartilhar)
+            <button type="button" onClick={async () => {
+                try {
+                  const byteString = atob(previewFolha.split(',')[1]);
+                  const mimeString = previewFolha.split(',')[0].split(':')[1].split(';')[0];
+                  const ab = new ArrayBuffer(byteString.length);
+                  const ia = new Uint8Array(ab);
+                  for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+                  const blob = new Blob([ab], {type: mimeString});
+                  const file = new File([blob], `Gabarito_${turma.replace(/[^a-z0-9]/gi, '_')}.png`, { type: "image/png" });
+                  
+                  if (navigator.share) await navigator.share({ files: [file], title: 'Gabarito' });
+                } catch(e) { alert("Pressione o dedo na imagem acima para salvar."); }
+            }} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-4 rounded-xl font-black text-lg flex items-center justify-center gap-2 shadow-lg">
+              <Share2 className="w-6 h-6" /> Enviar Arquivo ou Imprimir
             </button>
           </div>
         </div>
+      )}
+
+      {/* MODALS FALLBACK CSV */}
+      {csvFallbackData && (
+         <div className="fixed inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+           <div className="bg-white p-5 rounded-2xl max-w-md w-full shadow-2xl flex flex-col">
+             <div className="flex justify-between items-center mb-4 border-b pb-2">
+                <h3 className="font-bold text-slate-800 text-lg">Bloqueio do Android</h3>
+                <button onClick={() => setCsvFallbackData(null)}><X className="w-6 h-6 text-slate-400"/></button>
+             </div>
+             <p className="text-sm text-slate-600 mb-4">O seu celular bloqueou o download automático do arquivo. Mas não se preocupe! Clique em copiar e cole no Excel, Bloco de Notas ou WhatsApp.</p>
+             <textarea readOnly value={csvFallbackData} className="w-full h-40 bg-slate-50 border rounded-lg p-2 text-xs font-mono text-slate-700 mb-4"></textarea>
+             <button onClick={copiarCSVMenual} className="w-full bg-green-500 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                <Copy className="w-5 h-5"/> Copiar Dados
+             </button>
+           </div>
+         </div>
       )}
 
       {showClearConfirm && (
