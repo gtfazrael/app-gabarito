@@ -1,39 +1,113 @@
+/* eslint-disable */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
-  Upload, FileText, BarChart3, 
+  FileText, BarChart3, 
   Settings, Download, 
-  Camera, X, Image as ImageIcon, ScanLine
+  Camera, X, Image as ImageIcon, ScanLine, Share2, Trash2, Save, FileUp, CheckCircle2, Focus, Printer
 } from 'lucide-react';
+
+const BOX_W = 1080;
+const BOX_H = 1220;
+const CHAMADA_H = 240; 
+const MAX_ROWS = 25;   
+const ROW_H = (BOX_H - CHAMADA_H) / MAX_ROWS; 
+const COL_W = BOX_W / 4; 
 
 export default function App() {
   const [view, setView] = useState('setup'); 
+  
+  const [nomeProva, setNomeProva] = useState('Simulado 1');
+  const [turma, setTurma] = useState('9º Ano A');
   const [numQuestoes, setNumQuestoes] = useState(10);
   const [numAlternativas, setNumAlternativas] = useState(5);
   const [gabaritoOficial, setGabaritoOficial] = useState(Array(10).fill('A'));
-  const [provasLidas, setProvasLidas] = useState([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [arquivosUpload, setArquivosUpload] = useState([]);
   
+  const [provasLidas, setProvasLidas] = useState([]);
+  
+  const [isScanning, setIsScanning] = useState(false);
   const [previewFolha, setPreviewFolha] = useState(null);
-  const [nomeAlunoCamera, setNomeAlunoCamera] = useState('');
-
-  // Estados e Referências para a Câmera Integrada
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  
   const videoRef = useRef(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
   const [streamAtivo, setStreamAtivo] = useState(null);
+  
+  // Memória temporária para estabilizar a leitura da câmera
+  const scanBufferRef = useRef([]);
 
-  // Desliga a câmera automaticamente ao sair da aba (Código blindado para o ESLint do GitHub)
+  // === 1. MEMÓRIA OFFLINE ===
   useEffect(() => {
-    if (view !== 'camera' && streamAtivo) {
-      streamAtivo.getTracks().forEach(track => track.stop());
-      setStreamAtivo(null);
-    }
-  }, [view, streamAtivo]);
+    try {
+      const dadosSalvos = localStorage.getItem('gabaritoPro_dados_v6');
+      if (dadosSalvos) {
+        const parsed = JSON.parse(dadosSalvos);
+        if (parsed.provasLidas) setProvasLidas(parsed.provasLidas);
+        if (parsed.gabaritoOficial) {
+          setGabaritoOficial(parsed.gabaritoOficial);
+          setNumQuestoes(parsed.gabaritoOficial.length);
+        }
+        if (parsed.numAlternativas) setNumAlternativas(parsed.numAlternativas);
+        if (parsed.nomeProva) setNomeProva(parsed.nomeProva);
+        if (parsed.turma) setTurma(parsed.turma);
+      }
+    } catch (e) { console.error("Erro na memória:", e); }
+  }, []);
 
+  useEffect(() => {
+    try {
+      const dadosParaSalvar = { provasLidas, gabaritoOficial, numAlternativas, nomeProva, turma };
+      localStorage.setItem('gabaritoPro_dados_v6', JSON.stringify(dadosParaSalvar));
+    } catch (e) { console.error("Erro ao salvar:", e); }
+  }, [provasLidas, gabaritoOficial, numAlternativas, nomeProva, turma]);
+
+  // === 2. GERENCIAMENTO DA CÂMERA ===
   const pararCamera = () => {
+    setIsCameraActive(false);
     if (streamAtivo) {
-      streamAtivo.getTracks().forEach(track => track.stop());
+      streamAtivo.getTracks().forEach((track) => track.stop());
       setStreamAtivo(null);
     }
+  };
+
+  useEffect(() => { 
+    if (view !== 'camera') pararCamera(); 
+    return () => pararCamera(); 
+  }, [view]);
+
+  useEffect(() => {
+    let stream = null;
+    let isMounted = true;
+
+    const ligarLente = async () => {
+      if (isCameraActive && videoRef.current) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+          });
+          if (isMounted) {
+            setStreamAtivo(stream);
+            if (videoRef.current) videoRef.current.srcObject = stream;
+          } else {
+             stream.getTracks().forEach(track => track.stop());
+          }
+        } catch (err) {
+          alert("Erro na câmera ao vivo. Use o botão de Leitura de Arquivos ou Backup.");
+          if (isMounted) setIsCameraActive(false);
+        }
+      }
+    };
+    ligarLente();
+    
+    return () => { 
+      isMounted = false;
+      if (stream) stream.getTracks().forEach(track => track.stop()); 
+    };
+  }, [isCameraActive]);
+
+  const ligarCamera = () => {
+    scanBufferRef.current = []; // Reseta o estabilizador
+    setIsCameraActive(true);
   };
 
   const alternativasInUse = useMemo(() => {
@@ -41,631 +115,762 @@ export default function App() {
     return ['A', 'B', 'C', 'D', 'E'].slice(0, Math.max(2, Math.min(5, qtde)));
   }, [numAlternativas]);
 
-  const handleNumQuestoesChange = (e) => {
-    const valStr = e.target.value;
-    if (valStr === '') { 
-      setNumQuestoes(''); 
-      return; 
-    }
-    const val = parseInt(valStr);
-    if (!isNaN(val)) {
-      setNumQuestoes(val);
-      if (val > 0 && val <= 100) {
-        setGabaritoOficial(Array(val).fill('A'));
-      }
-    }
-  };
+  // === 3. AUTO-SCANNER ESTABILIZADO ===
+  useEffect(() => {
+    let interval;
+    if (isCameraActive && !toastMessage && view === 'camera') {
+      interval = setInterval(() => {
+        try {
+          if (!videoRef.current || videoRef.current.readyState < 2) return;
+          
+          const video = videoRef.current;
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  const handleNumQuestoesBlur = () => {
-    let val = parseInt(numQuestoes);
-    if (isNaN(val) || val < 1) { val = 1; }
-    if (val > 100) { val = 100; }
-    setNumQuestoes(val);
-    setGabaritoOficial(Array(val).fill('A'));
-  };
+          const cropW = canvas.width * 0.90; 
+          const cropH = canvas.height * 0.85;
+          const cropX = (canvas.width - cropW) / 2; 
+          const cropY = (canvas.height - cropH) / 2;
 
-  const handleNumAlternativasChange = (e) => {
-    const valStr = e.target.value;
-    if (valStr === '') { 
-      setNumAlternativas(''); 
-      return; 
+          const canvasRecortado = document.createElement('canvas');
+          canvasRecortado.width = cropW; canvasRecortado.height = cropH;
+          const ctxRecortado = canvasRecortado.getContext('2d');
+          ctxRecortado.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+          const analise = analisarCanvasOMR(canvasRecortado);
+
+          if (analise.validBox && analise.chamada !== "00") {
+            const hashLeitura = analise.chamada + analise.respostas.join('');
+            
+            scanBufferRef.current.push({ hash: hashLeitura, dados: analise });
+            if (scanBufferRef.current.length > 3) scanBufferRef.current.shift();
+
+            if (scanBufferRef.current.length === 3 &&
+                scanBufferRef.current[0].hash === hashLeitura &&
+                scanBufferRef.current[1].hash === hashLeitura) {
+                
+                setProvasLidas(prev => {
+                  const jaExiste = prev.find(p => p.chamada === analise.chamada && p.turma === turma && p.prova === nomeProva && (Date.now() - p.timestamp < 5000));
+                  if (jaExiste) return prev; 
+                  
+                  return [...prev, {
+                    id: Math.random().toString(36).substr(2, 9),
+                    chamada: analise.chamada,
+                    nome: `Aluno Nº ${analise.chamada}`,
+                    prova: nomeProva,
+                    turma: turma,
+                    respostas: analise.respostas,
+                    timestamp: Date.now()
+                  }];
+                });
+                
+                setToastMessage(`Salvo! Aluno Nº ${analise.chamada}`);
+                scanBufferRef.current = []; 
+                setTimeout(() => setToastMessage(''), 2000); 
+            }
+          } else {
+             scanBufferRef.current = [];
+          }
+        } catch (e) {} 
+      }, 300); 
     }
-    const val = parseInt(valStr);
-    if (!isNaN(val)) {
-      setNumAlternativas(val);
-      if (val >= 2 && val <= 5) {
-        const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
-        setGabaritoOficial(prev => {
-          return prev.map(resp => {
-            if (novasAlternativas.includes(resp)) { return resp; }
-            return 'A';
-          });
-        });
-      }
-    }
-  };
+    return () => clearInterval(interval);
+  }, [isCameraActive, toastMessage, view, alternativasInUse, numQuestoes, nomeProva, turma]);
 
-  const handleNumAlternativasBlur = () => {
-    let val = parseInt(numAlternativas);
-    if (isNaN(val) || val < 2) { val = 2; }
-    if (val > 5) { val = 5; }
-    setNumAlternativas(val);
-    const novasAlternativas = ['A', 'B', 'C', 'D', 'E'].slice(0, val);
-    setGabaritoOficial(prev => {
-      return prev.map(resp => {
-        if (novasAlternativas.includes(resp)) { return resp; }
-        return 'A';
-      });
-    });
-  };
 
-  // --- GERADOR DA FOLHA DE RESPOSTAS ---
+  // === 4. GERADOR DE FOLHAS A4 ===
   const gerarFolhaNaTela = () => {
-    const qCount = parseInt(numQuestoes) || 1;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    canvas.width = 800;
-    canvas.height = 350 + (qCount * 60);
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.fillStyle = '#000000';
-    ctx.font = 'bold 32px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('FOLHA DE RESPOSTAS', canvas.width / 2, 60);
-    
-    ctx.textAlign = 'left';
-    ctx.font = '22px Arial';
-    ctx.fillText('Aluno(a): _________________________________________________', 50, 130);
-    
-    ctx.font = 'bold 16px Arial';
-    ctx.fillText('INSTRUÇÕES PARA O ALUNO E PROFESSOR:', 50, 180);
-    ctx.font = '16px Arial';
-    ctx.fillText('- Preencha a bolinha completamente escura (use caneta preta ou azul).', 50, 205);
-    ctx.fillText('- Na hora de fotografar, enquadre APENAS a CAIXA PRETA contendo as bolinhas.', 50, 230);
-    
-    // Caixa delimitadora (essencial para a leitura OMR)
-    const boxStartX = 50;
-    const boxStartY = 280;
-    const boxWidth = 700;
-    const boxHeight = qCount * 60;
-    
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#000000';
-    ctx.strokeRect(boxStartX, boxStartY, boxWidth, boxHeight);
-    
-    for (let i = 0; i < qCount; i++) {
-      ctx.font = 'bold 24px Arial';
-      ctx.fillStyle = '#000000';
-      ctx.fillText((i + 1) + '.', boxStartX + 30, boxStartY + 40 + (i * 60));
+    try {
+      const qCount = parseInt(numQuestoes) || 1;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
       
-      alternativasInUse.forEach((alt, aIdx) => {
-        const cx = boxStartX + 150 + (aIdx * 100);
-        const cy = boxStartY + 32 + (i * 60);
-        
-        ctx.beginPath();
-        ctx.arc(cx, cy, 20, 0, 2 * Math.PI);
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        
-        ctx.font = 'bold 20px Arial';
-        ctx.fillStyle = '#999999';
-        ctx.textAlign = 'center';
-        ctx.fillText(alt, cx, cy + 7);
-        ctx.textAlign = 'left';
-      });
+      canvas.width = 1200; 
+      canvas.height = 1700; 
+      
+      ctx.fillStyle = '#ffffff'; 
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      ctx.fillStyle = '#000000'; 
+      ctx.font = 'bold 46px Arial'; 
+      ctx.textAlign = 'center';
+      ctx.fillText('FOLHA DE RESPOSTAS OMR', canvas.width / 2, 90);
+      
+      ctx.textAlign = 'left'; 
+      ctx.font = '28px Arial';
+      ctx.fillText(`Turma: ${turma}   |   Prova: ${nomeProva}`, 60, 180);
+      ctx.fillText('Nome do Aluno: ________________________________________________________________', 60, 240);
+      
+      ctx.font = 'bold 22px Arial'; ctx.fillText('INSTRUÇÕES:', 60, 300);
+      ctx.font = '20px Arial';
+      ctx.fillText('- Pinte a bolinha TOTALMENTE ESCURA com caneta preta ou azul.', 60, 330);
+      ctx.fillText('- Identifique o seu NÚMERO DE CHAMADA preenchendo a Dezena e a Unidade.', 60, 360);
+      ctx.fillText('- PROFESSOR: Ao fotografar, enquadre toda a caixa preta espessa dentro da tela.', 60, 390);
+      
+      const boxStartX = 60;
+      const boxStartY = 420;
+      
+      ctx.lineWidth = 10; 
+      ctx.strokeStyle = '#000000';
+      ctx.strokeRect(boxStartX, boxStartY, BOX_W, BOX_H);
+      
+      ctx.font = 'bold 24px Arial'; 
+      ctx.fillStyle = '#000000';
+      ctx.fillText('Nº CHAMADA:', boxStartX + 40, boxStartY + 50);
+      
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText('Dezena:', boxStartX + 40, boxStartY + 100);
+      for(let d = 0; d <= 9; d++) {
+          let cx = boxStartX + 160 + (d * 55); 
+          let cy = boxStartY + 93;
+          ctx.beginPath(); ctx.arc(cx, cy, 18, 0, 2 * Math.PI); ctx.lineWidth = 3; ctx.stroke();
+          ctx.fillStyle = '#999999'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center'; 
+          ctx.fillText(d, cx, cy + 6); ctx.textAlign = 'left'; ctx.fillStyle = '#000000';
+      }
+
+      ctx.fillText('Unidade:', boxStartX + 40, boxStartY + 180);
+      for(let u = 0; u <= 9; u++) {
+          let cx = boxStartX + 160 + (u * 55); 
+          let cy = boxStartY + 173;
+          ctx.beginPath(); ctx.arc(cx, cy, 18, 0, 2 * Math.PI); ctx.lineWidth = 3; ctx.stroke();
+          ctx.fillStyle = '#999999'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center'; 
+          ctx.fillText(u, cx, cy + 6); ctx.textAlign = 'left'; ctx.fillStyle = '#000000';
+      }
+
+      ctx.beginPath(); 
+      ctx.moveTo(boxStartX, boxStartY + CHAMADA_H); 
+      ctx.lineTo(boxStartX + BOX_W, boxStartY + CHAMADA_H); 
+      ctx.lineWidth = 5; 
+      ctx.stroke();
+
+      for (let i = 0; i < qCount; i++) {
+          let col = Math.floor(i / MAX_ROWS);
+          let row = i % MAX_ROWS;
+          
+          let baseX = boxStartX + (col * COL_W);
+          let cy = boxStartY + CHAMADA_H + (row * ROW_H) + (ROW_H / 2);
+          
+          ctx.font = 'bold 22px Arial'; 
+          ctx.textAlign = 'right';
+          ctx.fillText((i + 1) + '.', baseX + 60, cy + 8);
+          ctx.textAlign = 'left';
+          
+          let altWidth = 200 / alternativasInUse.length;
+          alternativasInUse.forEach((alt, aIdx) => {
+              let cx = baseX + 80 + (aIdx * altWidth) + (altWidth / 2);
+              ctx.beginPath(); ctx.arc(cx, cy, 14, 0, 2 * Math.PI); ctx.lineWidth = 3; ctx.stroke();
+              ctx.font = 'bold 16px Arial'; ctx.fillStyle = '#999999'; ctx.textAlign = 'center';
+              ctx.fillText(alt, cx, cy + 6); ctx.textAlign = 'left'; ctx.fillStyle = '#000000';
+          });
+      }
+      
+      setPreviewFolha(canvas.toDataURL('image/png'));
+    } catch (e) {
+      alert("Erro ao criar desenho da folha.");
     }
-    
-    setPreviewFolha(canvas.toDataURL('image/png'));
   };
 
-  // --- MOTOR ANALISADOR OMR (OFFLINE) ---
+  // === SOLUÇÃO DE IMPRESSÃO / EXPORTAÇÃO BLINDADA ===
+  const compartilharFolha = async () => {
+    try {
+      if (!previewFolha) return;
+      
+      // Conversão Base64 -> Blob manual (Evita erro de fetch no WebView Android)
+      const byteString = atob(previewFolha.split(',')[1]);
+      const mimeString = previewFolha.split(',')[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+          ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], {type: mimeString});
+      const file = new File([blob], `Gabarito_${turma.replace(/[^a-z0-9]/gi, '_')}.png`, { type: "image/png" });
+      
+      // Tenta usar a interface nativa de compartilhamento do celular
+      if (navigator.share) {
+        try {
+            await navigator.share({
+                files: [file],
+                title: 'Gabarito',
+                text: 'Folha de Gabarito para Impressão.'
+            });
+            return;
+        } catch (e) {
+            // Cancelou ou falhou, segue para o fallback abaixo
+        }
+      }
+      
+      // Fallback clássico de download
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); 
+      link.href = url; 
+      link.download = `Gabarito_${turma.replace(/[^a-z0-9]/gi, '_')}.png`; 
+      document.body.appendChild(link); 
+      link.click(); 
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+
+    } catch (error) {
+      alert("Seu celular bloqueou o envio. Pressione e segure o dedo em cima da imagem da folha e escolha 'Salvar na Galeria' ou 'Fazer o download da imagem'.");
+    }
+  };
+
+  const imprimirFolha = () => {
+    // Aciona a impressão nativa que permite salvar em PDF no Android
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      iframe.contentDocument.write(`
+        <html>
+          <head><title>Imprimir Gabarito</title></head>
+          <body style="margin:0; padding:0; text-align:center;">
+            <img src="${previewFolha}" style="width:100%; max-width: 800px;" />
+          </body>
+        </html>
+      `);
+      iframe.contentDocument.close();
+      
+      setTimeout(() => {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        setTimeout(() => document.body.removeChild(iframe), 1000);
+      }, 500);
+    } catch(e) {
+      alert("Erro ao abrir impressora. Tente a opção de Compartilhar.");
+    }
+  };
+
+  // === 5. MOTOR OMR GEOMÉTRICO (REFINADO) ===
   const analisarCanvasOMR = (canvas) => {
     const qCount = parseInt(numQuestoes) || 1;
+    const altCount = alternativasInUse.length;
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
-    let minX = canvas.width;
-    let minY = canvas.height;
-    let maxX = 0;
-    let maxY = 0;
+    let minX = canvas.width, minY = canvas.height, maxX = 0, maxY = 0;
     
-    // 1. Encontra a Caixa Preta (Bounding Box) ignorando sombras leves
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const i = (y * canvas.width + x) * 4;
-        const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-        if (gray < 100) { 
-          if (x < minX) { minX = x; }
-          if (x > maxX) { maxX = x; }
-          if (y < minY) { minY = y; }
-          if (y > maxY) { maxY = y; }
+        const gray = (data[i] + data[i+1] + data[i+2]) / 3;
+        if (gray < 80) { 
+          if (x < minX) minX = x; 
+          if (x > maxX) maxX = x; 
+          if (y < minY) minY = y; 
+          if (y > maxY) maxY = y; 
         }
       }
     }
 
-    const gridW = maxX - minX;
+    const gridW = maxX - minX; 
     const gridH = maxY - minY;
+    
+    const ratio = gridW / gridH;
+    let validBox = (gridW > canvas.width * 0.45 && gridH > canvas.height * 0.45 && ratio > 0.75 && ratio < 1.05);
 
-    if (gridW <= 0 || gridH <= 0) {
-      return Array(qCount).fill('-');
+    if (!validBox) {
+      return { validBox: false, chamada: '00', respostas: [] };
     }
 
-    const cellW = gridW / alternativasInUse.length;
-    const cellH = gridH / qCount;
-    const respuestas = [];
+    const scaleX = gridW / BOX_W; 
+    const scaleY = gridH / BOX_H;
 
-    // 2. Analisa cada quadrante de bolinha
-    for (let q = 0; q < qCount; q++) {
-      let maxDarkness = -1;
-      let bestAlt = '-';
-
-      for (let a = 0; a < alternativasInUse.length; a++) {
-        const startX = Math.floor(minX + a * cellW + cellW * 0.25);
-        const endX = Math.floor(minX + (a + 1) * cellW - cellW * 0.25);
-        const startY = Math.floor(minY + q * cellH + cellH * 0.25);
-        const endY = Math.floor(minY + (q + 1) * cellH - cellH * 0.25);
-
-        let darkCount = 0;
-        let totalCount = 0;
-
-        for (let y = startY; y < endY; y++) {
-          for (let x = startX; x < endX; x++) {
-            const i = (y * canvas.width + x) * 4;
-            const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            if (gray < 120) {
-              darkCount++;
+    const checkBubble = (relX, relY) => {
+        const cx = minX + (relX * scaleX); 
+        const cy = minY + (relY * scaleY);
+        const rX = 5 * scaleX; 
+        const rY = 5 * scaleY;
+        let dark = 0, total = 0;
+        for(let y = Math.floor(cy - rY); y <= Math.floor(cy + rY); y++) {
+            for(let x = Math.floor(cx - rX); x <= Math.floor(cx + rX); x++) {
+                 if(x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+                     const i = (y * canvas.width + x) * 4;
+                     const gray = (data[i] + data[i+1] + data[i+2]) / 3;
+                     if(gray < 100) dark++; 
+                     total++;
+                 }
             }
-            totalCount++;
-          }
         }
+        return total > 0 ? (dark / total) : 0;
+    };
 
-        const darkness = darkCount / totalCount;
-        if (darkness > maxDarkness) {
-          maxDarkness = darkness;
-          bestAlt = alternativasInUse[a];
-        }
-      }
-      
-      if (maxDarkness < 0.15) {
-        respuestas.push('-');
-      } else {
-        respuestas.push(bestAlt);
-      }
+    let maxDez = 0, bestDez = 0;
+    for(let d=0; d<=9; d++) {
+       let val = checkBubble(160 + (d * 55), 93);
+       if(val > maxDez) { maxDez = val; bestDez = d; }
     }
-    return respuestas;
-  };
+    if(maxDez < 0.35) bestDez = 0;
 
-  // --- FUNÇÕES DA CÂMERA INTEGRADA ---
-  const iniciarCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-      });
-      setStreamAtivo(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      alert("Erro ao acessar a câmera. Verifique se o aplicativo tem permissão.");
+    let maxUni = 0, bestUni = 0;
+    for(let u=0; u<=9; u++) {
+       let val = checkBubble(160 + (u * 55), 173);
+       if(val > maxUni) { maxUni = val; bestUni = u; }
     }
-  };
+    if(maxUni < 0.35) bestUni = 0;
+    
+    let chamadaLida = `${bestDez}${bestUni}`;
 
-  const capturarDaCamera = () => {
-    if (!nomeAlunoCamera.trim()) {
-      alert("Por favor, digite o nome do aluno antes de escanear.");
-      return;
-    }
-    if (!videoRef.current) {
-      return;
-    }
+    const respostas = [];
+    const altWidth = 200 / altCount;
 
-    setIsScanning(true);
-    try {
-      const video = videoRef.current;
-      const canvasTotal = document.createElement('canvas');
-      canvasTotal.width = video.videoWidth;
-      canvasTotal.height = video.videoHeight;
-      const ctxTotal = canvasTotal.getContext('2d');
-      ctxTotal.drawImage(video, 0, 0, canvasTotal.width, canvasTotal.height);
+    for (let i = 0; i < qCount; i++) {
+        let col = Math.floor(i / MAX_ROWS);
+        let row = i % MAX_ROWS;
+        let baseX = col * COL_W;
+        let baseY = CHAMADA_H + (row * ROW_H);
 
-      // Recorta a imagem baseando-se na área da "Mira" verde da tela
-      const cropW = canvasTotal.width * 0.9; 
-      const cropH = canvasTotal.height * 0.8;
-      const cropX = (canvasTotal.width - cropW) / 2;
-      const cropY = (canvasTotal.height - cropH) / 2;
-
-      const canvasRecortado = document.createElement('canvas');
-      canvasRecortado.width = cropW;
-      canvasRecortado.height = cropH;
-      const ctxRecortado = canvasRecortado.getContext('2d');
-      ctxRecortado.drawImage(canvasTotal, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-      const respostas = analisarCanvasOMR(canvasRecortado);
-
-      setProvasLidas(prev => {
-        return [...prev, {
-          id: Math.random().toString(36).substr(2, 9),
-          nome: nomeAlunoCamera,
-          respostas: respostas
-        }];
-      });
-      
-      setNomeAlunoCamera('');
-      alert("Prova escaneada com sucesso!");
-    } catch (err) {
-      alert("Erro ao processar a imagem da câmera.");
-    } finally {
-      setIsScanning(false);
-    }
-  };
-
-  // --- FUNÇÕES DE UPLOAD (GALERIA) ---
-  const processarArquivoImagem = (file, nomeAluno) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const scale = 800 / img.width;
-        canvas.width = 800;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        let bestAlt = '-'; 
+        let maxAltDark = 0;
         
-        const respostas = analisarCanvasOMR(canvas);
-        resolve({
-          id: Math.random().toString(36).substr(2, 9),
-          nome: nomeAluno,
-          respostas: respostas
-        });
-      };
-      img.onerror = () => { reject("Erro ao ler imagem"); };
-      img.src = URL.createObjectURL(file);
-    });
-  };
-
-  const handleFileUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setArquivosUpload(prev => { return [...prev, ...Array.from(e.target.files)]; });
+        for(let a=0; a < altCount; a++) {
+            let relX = baseX + 80 + (a * altWidth) + (altWidth / 2);
+            let relY = baseY + (ROW_H / 2);
+            
+            let val = checkBubble(relX, relY);
+            if(val > maxAltDark) { maxAltDark = val; bestAlt = alternativasInUse[a]; }
+        }
+        if(maxAltDark < 0.35) bestAlt = '-';
+        respostas.push(bestAlt);
     }
+    
+    return { validBox: true, chamada: chamadaLida, respostas: respostas };
   };
 
-  const processarImagensUpload = async () => {
-    if (arquivosUpload.length === 0) { return; }
+  // === 6. LEITURA DE ARQUIVOS EM LOTE (OFFLINE) ===
+  const extrairProvaDoLote = (canvasBase) => {
+    const cropW = canvasBase.width * 0.95;
+    const cropH = canvasBase.height * 0.95;
+    const cropX = (canvasBase.width - cropW) / 2;
+    const cropY = (canvasBase.height - cropH) / 2;
+
+    const canvasRecortado = document.createElement('canvas');
+    canvasRecortado.width = cropW;
+    canvasRecortado.height = cropH;
+    const ctx = canvasRecortado.getContext('2d');
+    ctx.drawImage(canvasBase, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const analise = analisarCanvasOMR(canvasRecortado);
+    if (analise.validBox && analise.chamada !== "00") {
+      return {
+        id: Math.random().toString(36).substr(2, 9),
+        chamada: analise.chamada,
+        nome: `Aluno Nº ${analise.chamada}`,
+        prova: nomeProva,
+        turma: turma,
+        respostas: analise.respostas,
+        timestamp: Date.now()
+      };
+    }
+    return null;
+  };
+
+  const handleFileUploadLote = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
     setIsScanning(true);
+    
     try {
-      const novosAlunos = await Promise.all(arquivosUpload.map(async (arquivo) => {
-        const nomeGerado = arquivo.name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
-        return await processarArquivoImagem(arquivo, nomeGerado);
-      }));
-      setProvasLidas(prev => { return [...prev, ...novosAlunos]; });
-      setArquivosUpload([]);
-    } catch (error) {
-      alert("Erro ao processar as imagens.");
+      let provasExtraidas = [];
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          const img = new Image();
+          await new Promise((resolve) => {
+            img.onload = () => {
+              const canvasTotal = document.createElement('canvas');
+              const scale = 1200 / img.width; 
+              canvasTotal.width = 1200; 
+              canvasTotal.height = img.height * scale;
+              const ctxTotal = canvasTotal.getContext('2d');
+              ctxTotal.drawImage(img, 0, 0, canvasTotal.width, canvasTotal.height);
+              
+              const prova = extrairProvaDoLote(canvasTotal);
+              if(prova) provasExtraidas.push(prova);
+              resolve();
+            };
+            img.onerror = resolve; 
+            img.src = URL.createObjectURL(file);
+          });
+        }
+      }
+
+      if (provasExtraidas.length > 0) {
+        setProvasLidas(prev => [...prev, ...provasExtraidas]);
+        alert(`Lote processado! ${provasExtraidas.length} provas adicionadas.`);
+      } else {
+        alert("Atenção: O sistema não conseguiu alinhar as imagens. Evite arquivos PDF, use fotos diretas da galeria neste modo.");
+      }
+    } catch (err) {
+      alert("Erro ao processar lote: " + err.message);
     } finally {
       setIsScanning(false);
+      e.target.value = null; 
     }
   };
 
-  // --- RESULTADOS E PLANILHA ---
-  const limparDados = () => {
-    if (window.confirm("Apagar todos os dados da memória?")) { setProvasLidas([]); }
+  const handleCameraCaptureBackup = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    const img = new Image();
+    img.onload = () => {
+      const canvasTotal = document.createElement('canvas');
+      const scale = 1200 / img.width; 
+      canvasTotal.width = 1200; 
+      canvasTotal.height = img.height * scale;
+      const ctxTotal = canvasTotal.getContext('2d');
+      ctxTotal.drawImage(img, 0, 0, canvasTotal.width, canvasTotal.height);
+      
+      const prova = extrairProvaDoLote(canvasTotal);
+      if (prova) {
+        setProvasLidas(prev => [...prev, prova]);
+        alert(`Sucesso! Aluno Nº ${prova.chamada} salvo.`);
+      } else {
+        alert("Falha na leitura. A foto está torta ou muito longe da caixa preta.");
+      }
+      setIsScanning(false);
+    };
+    img.onerror = () => { alert("Falha na imagem"); setIsScanning(false); };
+    img.src = URL.createObjectURL(file);
   };
 
+  // === 7. ESTATÍSTICAS E PLANILHAS ===
   const dadosProcessados = useMemo(() => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (provasLidas.length === 0) { return null; }
-    let totalAcertosTurma = 0;
+    if (provasLidas.length === 0) return null; 
+    let totalAcertosGeral = 0;
 
-    const alunosProcessados = provasLidas.map(aluno => {
+    const alunosProcessados = provasLidas.map((aluno) => {
       let acertos = 0;
       const correcao = aluno.respostas.map((resp, index) => {
         const isCorreto = resp === gabaritoOficial[index];
-        if (isCorreto) { acertos++; }
+        if (isCorreto) acertos++; 
         return isCorreto; 
       });
-      totalAcertosTurma += acertos;
-      return { 
-        ...aluno, 
-        acertos: acertos, 
-        porcentagem: (acertos / qCount) * 100, 
-        correcao: correcao 
-      };
+      totalAcertosGeral += acertos;
+      return { ...aluno, acertos, porcentagem: (acertos / qCount) * 100, correcao };
     });
 
-    const ranking = [...alunosProcessados].sort((a, b) => b.acertos - a.acertos);
-    const porcentagemTurma = ((totalAcertosTurma / (provasLidas.length * qCount)) * 100).toFixed(1);
+    const ranking = [...alunosProcessados].sort((a, b) => parseInt(a.chamada) - parseInt(b.chamada));
+    const porcentagemTurma = ((totalAcertosGeral / (provasLidas.length * qCount)) * 100).toFixed(1);
 
-    return { ranking: ranking, porcentagemTurma: porcentagemTurma };
+    return { ranking, porcentagemTurma };
   }, [provasLidas, gabaritoOficial, numQuestoes]);
 
-  const exportarCSV = () => {
+  const exportarCSV = async () => {
     const qCount = parseInt(numQuestoes) || 1;
-    if (!dadosProcessados) { return; }
-    let csv = "Nome,Acertos,%,";
-    for (let i = 1; i <= qCount; i++) { csv += "Q" + i + ","; }
+    if (!dadosProcessados) return; 
+    
+    let csv = `Turma,Prova,Chamada,Nome,Acertos,Nota (%),`;
+    for (let i = 1; i <= qCount; i++) csv += `Q${i},`; 
     csv += "\n";
-    dadosProcessados.ranking.forEach(aluno => {
-      csv += '"' + aluno.nome + '",' + aluno.acertos + ',' + aluno.porcentagem.toFixed(1) + '%,';
-      aluno.respostas.forEach(resp => { csv += resp + ","; });
+    
+    dadosProcessados.ranking.forEach((aluno) => {
+      csv += `"${aluno.turma}","${aluno.prova}","${aluno.chamada}","${aluno.nome}",${aluno.acertos},${aluno.porcentagem.toFixed(1)}%,`;
+      aluno.respostas.forEach(resp => csv += `${resp},`);
       csv += "\n";
     });
+
+    csv += "\n\n=== ALUNOS CRITICOS (ABAIXO DE 50%) ===\n";
+    csv += "Turma,Chamada,Nome,Nota (%)\n";
+    dadosProcessados.ranking.forEach((aluno) => {
+      if (aluno.porcentagem < 50) csv += `"${aluno.turma}","${aluno.chamada}","${aluno.nome}",${aluno.porcentagem.toFixed(1)}%\n`;
+    });
+
+    csv += "\n\n=== DIFICULDADE (ERROS POR QUESTAO) ===\n";
+    csv += "Questao,Total de Erros,Taxa de Erro (%)\n";
+    for (let i = 0; i < qCount; i++) {
+      let totalErrosQuestao = 0;
+      dadosProcessados.ranking.forEach(aluno => {
+        if (!aluno.correcao[i]) totalErrosQuestao++;
+      });
+      let taxaErro = ((totalErrosQuestao / provasLidas.length) * 100).toFixed(1);
+      csv += `Questao ${i + 1},${totalErrosQuestao},${taxaErro}%\n`;
+    }
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'Resultados_Gabarito.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const fileName = `Resultados_${turma.replace(/[^a-z0-9]/gi, '_')}.csv`;
+
+    try {
+      const file = new File([blob], fileName, { type: "text/csv" });
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Resultados da Turma',
+            text: 'Arquivo CSV gerado pelo GabaritoPro.'
+          });
+          return;
+        } catch(e) {
+          // Continua para o fallback de download
+        }
+      } 
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); 
+      link.href = url; link.setAttribute('download', fileName);
+      document.body.appendChild(link); 
+      link.click(); 
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+      
+    } catch (error) {
+      alert("Erro ao exportar a planilha. Tente enviar de outro dispositivo.");
+    }
   };
 
-  // --- ESTILIZAÇÃO E COMPONENTES VISUAIS ---
   const getCellClassResult = (isCorreto, isBranco) => {
-    let base = "p-3 text-center border-l border-white font-bold ";
-    if (isCorreto) { return base + "bg-blue-100 text-blue-700"; }
-    if (isBranco) { return base + "bg-slate-100 text-slate-400"; }
+    let base = "p-2 text-center border-l border-white font-bold text-xs ";
+    if (isCorreto) return base + "bg-blue-100 text-blue-700"; 
+    if (isBranco) return base + "bg-slate-100 text-slate-400"; 
     return base + "bg-red-100 text-red-700";
   };
 
-  const renderNavButton = (id, name, Icon) => {
-    const isActive = view === id;
-    let btnClass = "flex flex-col items-center justify-center flex-1 py-2 text-xs font-bold transition-colors ";
-    if (isActive) { btnClass += "text-indigo-600"; } 
-    else { btnClass += "text-slate-400"; }
-    return (
-      <button key={id} onClick={() => setView(id)} className={btnClass}>
-        <Icon className="w-5 h-5 mb-0.5" />
-        <span>{name}</span>
-      </button>
-    );
-  };
+  return (
+    <div className="min-h-screen font-sans bg-slate-100 pb-24 relative">
+      <header className="bg-indigo-600 sticky top-0 z-40 px-4 py-4 shadow-md">
+        <h1 className="text-center font-black tracking-tight text-2xl text-white">Gabarito<span className="text-indigo-200">Pro</span></h1>
+      </header>
 
-  const renderSetup = () => (
-    <div className="max-w-3xl mx-auto bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-      <div className="flex flex-col gap-4 mb-6 justify-between border-b border-slate-100 pb-4">
-        <div className="flex items-center gap-3">
-          <Settings className="w-6 h-6 text-indigo-600" />
-          <h2 className="text-xl font-bold text-slate-800">1. Configurar Prova</h2>
-        </div>
-        <button 
-          onClick={gerarFolhaNaTela}
-          className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-lg font-bold transition-colors text-sm shadow-sm"
-        >
-          <ImageIcon className="w-5 h-5" /> Gerar Folha de Respostas
-        </button>
-      </div>
-      
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div>
-          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Questões (1-100)</label>
-          <input type="number" value={numQuestoes} onChange={handleNumQuestoesChange} onBlur={handleNumQuestoesBlur} className="w-full px-4 py-2 border rounded-lg text-lg focus:ring-2 focus:ring-indigo-500 font-bold" />
-        </div>
-        <div>
-          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Opções (2-5)</label>
-          <input type="number" value={numAlternativas} onChange={handleNumAlternativasChange} onBlur={handleNumAlternativasBlur} className="w-full px-4 py-2 border rounded-lg text-lg focus:ring-2 focus:ring-indigo-500 font-bold" />
-        </div>
-      </div>
-
-      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-        <h3 className="text-sm font-bold text-slate-700 uppercase mb-4">Gabarito Oficial</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {Array.isArray(gabaritoOficial) && gabaritoOficial.map((resp, index) => (
-            <div key={index} className="flex items-center gap-2 bg-white p-2 border rounded-md shadow-sm">
-              <span className="w-6 text-xs font-black text-slate-400 text-right">{index + 1}.</span>
-              <select value={resp} onChange={(e) => {
-                const nv = [...gabaritoOficial];
-                nv[index] = e.target.value;
-                setGabaritoOficial(nv);
-              }} className="flex-1 border-0 font-bold bg-transparent text-indigo-700 focus:ring-0">
-                {alternativasInUse.map(alt => (
-                  <option key={alt} value={alt}>{alt}</option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderCamera = () => (
-    <div className="max-w-xl mx-auto space-y-4">
-      <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 mb-4 text-sm text-amber-800 font-medium">
-        DICA: Na hora de capturar, certifique-se de que a <strong>caixa retangular preta</strong> do gabarito esteja alinhada dentro da área pontilhada verde na tela.
-      </div>
-
-      <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-        <div className="mb-6">
-          <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Nome do Aluno:</label>
-          <input 
-            type="text" 
-            value={nomeAlunoCamera} 
-            onChange={(e) => setNomeAlunoCamera(e.target.value)} 
-            placeholder="Ex: Ana Silva"
-            className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 font-medium text-lg"
-          />
-        </div>
-
-        {!streamAtivo ? (
-          <button 
-            onClick={iniciarCamera} 
-            className="w-full py-6 flex flex-col items-center gap-3 border-2 border-dashed rounded-xl font-bold cursor-pointer transition-colors bg-indigo-50 border-indigo-400 text-indigo-700"
-          >
-            <Camera className="w-10 h-10 mb-2" /> 
-            <span>Ligar Câmera Integrada</span>
-          </button>
-        ) : (
-          <div className="relative rounded-xl overflow-hidden bg-black border border-slate-800 shadow-inner">
-            <video ref={videoRef} autoPlay playsInline className="w-full h-auto max-h-[55vh] object-cover" />
-            
-            <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
-              <div className="w-[90%] h-[80%] border-4 border-green-400 border-dashed relative rounded shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
-                <div className="absolute -top-7 left-0 right-0 text-center text-white text-xs font-bold bg-black/60 py-0.5 px-2 rounded">
-                  Enquadre a caixa preta do gabarito aqui
+      <main className="px-4 py-6 max-w-2xl mx-auto">
+        {/* ABA SETUP */}
+        {view === 'setup' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex flex-col gap-4 mb-6 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <Settings className="w-6 h-6 text-indigo-600" />
+                <h2 className="text-xl font-bold text-slate-800">1. Identificação</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Turma</label>
+                  <input type="text" value={turma} onChange={(e) => setTurma(e.target.value)} className="w-full px-4 py-3 border rounded-xl text-md font-bold bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Prova</label>
+                  <input type="text" value={nomeProva} onChange={(e) => setNomeProva(e.target.value)} className="w-full px-4 py-3 border rounded-xl text-md font-bold bg-slate-50" />
                 </div>
               </div>
             </div>
             
-            <button onClick={pararCamera} className="absolute top-2 right-2 z-20 bg-red-600 p-2 rounded-full text-white shadow-lg">
-              <X className="w-5 h-5" />
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Questões (Até 100)</label>
+                <input type="number" value={numQuestoes} onChange={(e) => setNumQuestoes(e.target.value)} onBlur={() => {let v=parseInt(numQuestoes); if(isNaN(v)||v<1)v=1; if(v>100)v=100; setNumQuestoes(v); setGabaritoOficial(Array(v).fill('A'));}} className="w-full px-4 py-3 border rounded-xl text-lg font-bold bg-slate-50" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Opções (2-5)</label>
+                <input type="number" value={numAlternativas} onChange={(e) => setNumAlternativas(e.target.value)} onBlur={() => {let v=parseInt(numAlternativas); if(isNaN(v)||v<2)v=2; if(v>5)v=5; setNumAlternativas(v); setGabaritoOficial(prev=>prev.map(r=>['A','B','C','D','E'].slice(0,v).includes(r)?r:'A'));}} className="w-full px-4 py-3 border rounded-xl text-lg font-bold bg-slate-50" />
+              </div>
+            </div>
+            
+            <button type="button" onClick={gerarFolhaNaTela} className="mb-6 w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-4 rounded-xl font-bold shadow-md">
+              <ImageIcon className="w-6 h-6" /> Gerar Folha A4 Padrão
             </button>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <h3 className="text-sm font-bold text-slate-700 uppercase mb-4">Gabarito Oficial</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {Array.isArray(gabaritoOficial) && gabaritoOficial.map((resp, index) => (
+                  <div key={index} className="flex items-center gap-2 bg-white p-2 border rounded-lg shadow-sm">
+                    <span className="w-8 text-sm font-black text-slate-400 text-right">{index + 1}.</span>
+                    <select value={resp} onChange={(e) => {
+                      const nv = [...gabaritoOficial]; nv[index] = e.target.value; setGabaritoOficial(nv);
+                    }} className="flex-1 border-0 font-bold bg-transparent text-indigo-700 text-lg">
+                      {alternativasInUse.map(alt => (<option key={alt} value={alt}>{alt}</option>))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
-        {streamAtivo ? (
-          <button 
-            onClick={capturarDaCamera}
-            disabled={isScanning || !nomeAlunoCamera.trim()}
-            className={`w-full mt-6 py-4 rounded-xl font-bold text-white flex justify-center items-center gap-2 shadow-lg transition-colors ${
-              !nomeAlunoCamera.trim() ? 'bg-slate-400' : 'bg-green-600 hover:bg-green-700'
-            }`}
-          >
-            {isScanning ? (
-              <div className="flex items-center gap-2 text-white">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                Analisando Pixels...
+        {/* ABA CÂMERA E LOTE */}
+        {view === 'camera' && (
+          <div className="max-w-xl mx-auto space-y-4">
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+              {!isCameraActive ? (
+                <div className="flex flex-col gap-4">
+                  <div className="text-center font-bold text-slate-400 text-xs uppercase mb-2">Correção Rápida Ao Vivo</div>
+                  
+                  <button type="button" onClick={ligarCamera} className="w-full py-6 flex flex-col items-center gap-2 border-2 border-dashed rounded-xl font-bold bg-indigo-50 border-indigo-400 text-indigo-700 hover:bg-indigo-100">
+                    <Focus className="w-10 h-10 mb-1" /> 
+                    <span className="text-lg">Auto-Scanner (Câmera)</span>
+                  </button>
+
+                  <div className="relative flex py-5 items-center">
+                      <div className="flex-grow border-t border-slate-200"></div>
+                      <span className="flex-shrink-0 mx-4 text-slate-400 text-xs font-bold uppercase">Ou Arquivos (Lote)</span>
+                      <div className="flex-grow border-t border-slate-200"></div>
+                  </div>
+
+                  <label className="w-full py-6 flex flex-col items-center gap-2 border-2 border-solid rounded-xl font-bold cursor-pointer bg-slate-800 border-slate-900 text-white hover:bg-slate-700">
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileUploadLote} disabled={isScanning} />
+                    {isScanning ? (
+                       <div className="flex flex-col items-center gap-2"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div> Lendo Arquivos...</div>
+                    ) : (
+                       <div className="flex flex-col items-center gap-2">
+                         <FileUp className="w-10 h-10 mb-1 text-indigo-300" />
+                         <span className="text-md">Upload de Imagens (Galeria)</span>
+                         <span className="text-[10px] text-slate-400 font-normal text-center px-4">Tirou várias fotos das provas? Faça upload delas de uma vez.</span>
+                       </div>
+                    )}
+                  </label>
+                  
+                  <label className="w-full py-4 flex flex-col items-center gap-2 border-2 border-dashed rounded-xl font-bold cursor-pointer bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 mt-2">
+                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraCaptureBackup} disabled={isScanning} />
+                     <Camera className="w-6 h-6 mb-1 text-slate-400" />
+                     <span className="text-sm">Tirar Foto Manual (Backup)</span>
+                  </label>
+                </div>
+              ) : (
+                <div className="relative rounded-xl overflow-hidden bg-black border border-slate-800 shadow-inner flex flex-col items-center">
+                  <video ref={videoRef} autoPlay={true} playsInline={true} muted={true} className="w-full h-auto max-h-[70vh] object-cover" />
+                  
+                  <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
+                    <div className="w-[90%] h-[85%] border-4 border-green-400 border-dashed relative rounded shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                      <div className="absolute top-2 left-0 right-0 flex justify-center">
+                         <div className="bg-black/80 px-3 py-1 rounded text-green-400 text-xs font-black uppercase tracking-wider">
+                           Alinhe a borda preta da folha aqui e pare
+                         </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {toastMessage && (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                       <div className="bg-white px-6 py-8 rounded-2xl flex flex-col items-center shadow-2xl transform scale-110 transition-transform">
+                          <CheckCircle2 className="w-16 h-16 text-green-500 mb-3" />
+                          <p className="font-black text-slate-800 text-lg text-center">{toastMessage}</p>
+                       </div>
+                    </div>
+                  )}
+                  
+                  <button type="button" onClick={pararCamera} className="absolute top-2 right-2 z-20 bg-red-600 p-2 rounded-full text-white shadow-lg border-2 border-white">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ABA RESULTADOS */}
+        {view === 'results' && (
+          <div>
+            {!dadosProcessados || provasLidas.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-xl border border-dashed shadow-sm">
+                <FileText className="w-20 h-20 text-slate-200 mx-auto mb-4" />
+                <p className="text-slate-500 font-bold text-lg">A Planilha está vazia.</p>
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-white">
-                <ScanLine className="w-6 h-6" />
-                Capturar e Corrigir Prova
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-xs text-slate-400 uppercase font-black tracking-wider">Provas Lidas</p>
+                    <p className="text-4xl font-black text-slate-800">{provasLidas.length}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-xs text-slate-400 uppercase font-black tracking-wider">Média Geral</p>
+                    <p className="text-4xl font-black text-green-600">{dadosProcessados.porcentagemTurma}%</p>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-center bg-slate-50 gap-3">
+                    <h2 className="font-bold text-slate-800 flex items-center gap-2"><Save className="w-5 h-5 text-green-500" /> Notas da Turma</h2>
+                    <button type="button" onClick={exportarCSV} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md">
+                      <Download className="w-5 h-5" /> Exportar Planilha Excel
+                    </button>
+                  </div>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-600 text-[10px] uppercase tracking-wider whitespace-nowrap">
+                          <th className="p-2 border-b font-black text-center">T</th>
+                          <th className="p-2 border-b font-black text-center">Nº</th>
+                          <th className="p-2 border-b font-black text-center bg-indigo-50">Pts</th>
+                          {gabaritoOficial.map((_, i) => (<th key={i} className="p-2 border-b text-center font-black">Q{i+1}</th>))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {dadosProcessados.ranking.map((aluno) => (
+                          <tr key={aluno.id} className="hover:bg-slate-50">
+                            <td className="p-2 text-slate-400 font-bold text-center text-xs whitespace-nowrap">{aluno.turma}</td>
+                            <td className="p-2 text-slate-800 font-black text-center">{aluno.chamada}</td>
+                            <td className="p-2 text-center font-black text-indigo-700 bg-indigo-50/30">{aluno.acertos}</td>
+                            {aluno.respostas.map((resp, i) => (
+                              <td key={i} className={getCellClassResult(aluno.correcao[i], resp === '-')}>{resp}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setShowClearConfirm(true)} className="w-full py-5 border-2 border-red-200 text-red-600 hover:bg-red-50 rounded-xl text-sm font-bold flex justify-center items-center gap-2">
+                  <Trash2 className="w-5 h-5" /> Apagar todas as provas da memória
+                </button>
               </div>
             )}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-
-  const renderUpload = () => (
-    <div className="max-w-xl mx-auto bg-white p-6 rounded-xl border border-slate-200 text-center">
-      <Upload className="w-10 h-10 text-indigo-600 mx-auto mb-3" />
-      <h2 className="text-lg font-bold text-slate-800 mb-4">Upload de Galeria</h2>
-      <label className="border-2 border-dashed border-indigo-200 bg-indigo-50/20 rounded-xl p-6 cursor-pointer block">
-        <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileUpload} disabled={isScanning} />
-        <span className="font-bold text-indigo-600 text-sm">Selecionar Fotos do Celular</span>
-      </label>
-      {arquivosUpload.length > 0 && (
-        <div className="mt-4">
-          <p className="text-xs font-bold text-slate-500 text-left mb-2">{arquivosUpload.length} arquivos selecionados.</p>
-          <button onClick={processarImagensUpload} disabled={isScanning} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold">
-            {isScanning ? 'Processando...' : 'Processar Lote'}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderResults = () => {
-    if (!dadosProcessados) {
-      return (
-        <div className="text-center py-12 bg-white rounded-xl border border-dashed">
-          <FileText className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-          <p className="text-slate-500 font-medium">Nenhuma prova escaneada na memória.</p>
-        </div>
-      );
-    }
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white p-4 rounded-xl border text-center">
-            <p className="text-xs text-slate-400 uppercase font-black">Alunos Lidos</p>
-            <p className="text-2xl font-black text-slate-800">{provasLidas.length}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border text-center">
-            <p className="text-xs text-slate-400 uppercase font-black">Média</p>
-            <p className="text-2xl font-black text-green-600">{dadosProcessados.porcentagemTurma}%</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="p-4 border-b flex justify-between items-center bg-slate-50">
-            <h2 className="font-bold text-slate-800">Planilha</h2>
-            <button onClick={exportarCSV} className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">
-              <Download className="w-3.5 h-3.5" /> Baixar (.csv)
-            </button>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap">
-                  <th className="p-3 border-b font-bold">#</th>
-                  <th className="p-3 border-b font-bold">Aluno</th>
-                  <th className="p-3 border-b font-bold text-center bg-indigo-50">Nota</th>
-                  {gabaritoOficial.map((_, i) => (
-                    <th key={i} className="p-3 border-b text-center font-bold">Q{i + 1}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {dadosProcessados.ranking.map((aluno, index) => (
-                  <tr key={aluno.id} className="hover:bg-slate-50/80">
-                    <td className="p-3 text-slate-400 font-bold">{index + 1}º</td>
-                    <td className="p-3 text-slate-800 font-bold whitespace-nowrap">{aluno.nome}</td>
-                    <td className="p-3 text-center font-bold text-indigo-700 bg-indigo-50/30">{aluno.acertos}</td>
-                    {aluno.respostas.map((resp, i) => {
-                      const isCorreto = aluno.correcao[i];
-                      const isBranco = resp === '-';
-                      return (
-                        <td key={i} className={getCellClassResult(isCorreto, isBranco)}>
-                          {resp}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <button onClick={limparDados} className="w-full py-3 border border-red-200 text-red-600 rounded-lg text-sm font-bold bg-red-50">
-          Zerar Memória
-        </button>
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen font-sans bg-slate-50 pb-20 relative">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 shadow-sm">
-        <h1 className="text-center font-black tracking-tight text-lg text-slate-800">Gabarito<span className="text-indigo-600">Pro</span></h1>
-      </header>
-
-      <main className="px-4 py-6 max-w-md mx-auto">
-        {view === 'setup' ? renderSetup() : null}
-        {view === 'camera' ? renderCamera() : null}
-        {view === 'upload' ? renderUpload() : null}
-        {view === 'results' ? renderResults() : null}
+        )}
       </main>
 
-      <nav className="bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-40 flex justify-around shadow-lg px-2">
-        {renderNavButton('setup', 'Config', Settings)}
-        {renderNavButton('camera', 'Câmera', Camera)}
-        {renderNavButton('upload', 'Galeria', Upload)}
-        {renderNavButton('results', 'Planilha', BarChart3)}
+      <nav className="bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-40 flex justify-around shadow-[0_-4px_10px_rgba(0,0,0,0.05)] px-2 pb-safe">
+        {[
+          { id: 'setup', name: 'Configuração', icon: Settings },
+          { id: 'camera', name: 'Scanner', icon: Camera },
+          { id: 'results', name: 'Resultados', icon: BarChart3 }
+        ].map(tab => (
+          <button type="button" key={tab.id} onClick={() => setView(tab.id)} className={`flex flex-col items-center justify-center flex-1 py-3 text-xs font-bold transition-colors ${view === tab.id ? 'text-indigo-600 border-t-2 border-indigo-600' : 'text-slate-400 border-t-2 border-transparent hover:text-slate-500'}`}>
+            <tab.icon className="w-6 h-6 mb-1" /><span>{tab.name}</span>
+          </button>
+        ))}
       </nav>
 
-      {previewFolha ? (
-        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
-          <button onClick={() => setPreviewFolha(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white">
-            <X className="w-6 h-6" />
-          </button>
+      {/* MODALS */}
+      {previewFolha && (
+        <div className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+          <button type="button" onClick={() => setPreviewFolha(null)} className="absolute top-4 right-4 bg-white/10 p-2 rounded-full text-white"><X className="w-8 h-8" /></button>
           
-          <div className="bg-white p-2 rounded-xl max-w-sm w-full max-h-[70vh] overflow-y-auto mb-4">
-            <img src={previewFolha} alt="Folha de Respostas" className="w-full h-auto border" />
+          <div className="bg-white p-3 rounded-2xl max-w-md w-full max-h-[60vh] overflow-y-auto mb-4 shadow-2xl relative">
+            <div className="absolute top-0 left-0 right-0 bg-yellow-400 text-black text-center text-xs font-bold py-1">
+              Segure o dedo na imagem para salvar na Galeria
+            </div>
+            <img src={previewFolha} alt="Folha de Respostas" className="w-full h-auto mt-4 border border-slate-200 rounded-lg" style={{ WebkitTouchCallout: 'default', userSelect: 'auto', pointerEvents: 'auto' }} />
           </div>
           
-          <div className="bg-indigo-600 text-white p-4 rounded-xl max-w-sm w-full text-center shadow-lg">
-            <p className="font-bold text-lg mb-1">Folha Pronta!</p>
-            <p className="text-sm opacity-90">Toque e segure o dedo em cima da imagem acima para salvá-la no seu celular ou compartilhá-la.</p>
+          <div className="max-w-md w-full flex flex-col gap-3">
+            <button type="button" onClick={imprimirFolha} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 py-3 rounded-xl font-black text-md flex items-center justify-center gap-2 shadow-lg">
+              <Printer className="w-5 h-5" /> Salvar como PDF / Imprimir
+            </button>
+            <button type="button" onClick={compartilharFolha} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-4 rounded-xl font-black text-lg flex items-center justify-center gap-2 shadow-lg">
+              <Share2 className="w-6 h-6" /> Enviar (Compartilhar)
+            </button>
           </div>
         </div>
-      ) : null}
+      )}
+
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white p-6 rounded-2xl max-w-sm w-full shadow-2xl text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4"><Trash2 className="w-8 h-8 text-red-600" /></div>
+            <h3 className="font-black text-xl text-slate-800 mb-2">Apagar Dados?</h3>
+            <p className="text-slate-500 mb-6 text-sm">Tem certeza de que deseja apagar as notas desta turma? Ação irreversível.</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 font-bold text-slate-600 bg-slate-100 rounded-xl">Cancelar</button>
+              <button type="button" onClick={() => {setProvasLidas([]); setShowClearConfirm(false);}} className="flex-1 py-3 font-bold text-white bg-red-600 rounded-xl">Sim, Apagar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
